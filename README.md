@@ -65,10 +65,11 @@ Add `--yes` before any command to run without prompts (CI, scripts). It fails wi
 ## What `shipone deploy` does
 
 1. **Checks git.** Your branch must be on GitHub. If you have unpushed commits, it stops, or offers to deploy what's already on GitHub.
-2. **Detects the stack.** It looks in `client/`, `frontend/`, `web/`, `server/`, `backend/`, `api/`, `apps/*`, `packages/*` and the repo root.
-   - **Frontends:** Vite, Next.js, Create React App, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix (npm, yarn or pnpm).
-   - **Backends:** Node (Express, Fastify, Koa, Hapi, NestJS, Hono), Python (FastAPI, Flask, Django — pip, Poetry or uv), Go (Gin, Echo, Fiber, chi), Rust (Axum, Actix, Rocket), Ruby (Rails, Sinatra) — or anything with a `Dockerfile`.
-   - Env-var names are matched per framework: `VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `NG_APP_`, `PUBLIC_` (SvelteKit/Astro), `NUXT_PUBLIC_`, `GATSBY_`, `REMIX_PUBLIC_`.
+2. **Detects the stack.** It looks in `client/`, `frontend/`, `web/`, `server/`, `backend/`, `api/`, `apps/*`, `packages/*`, `services/*`, any folder listed in your pnpm/npm/yarn workspaces, and the repo root.
+   - **Frontends:** Vite, Next.js, Create React App, Vue CLI, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix, React Router v7, SolidStart (npm, yarn or pnpm).
+   - **Backends:** Node (Express, Fastify, Koa, Hapi, NestJS, Hono, AdonisJS, or a plain `node:http` server in `server/`/`backend/`/`api/`), Python (FastAPI, Flask, Django — pip, Poetry, uv or Pipenv), Go (Gin, Echo, Fiber, chi, `net/http`), Rust (Axum, Actix, Rocket), Ruby (Rails, Sinatra) — or anything with a `Dockerfile`.
+   - **Monorepos:** pnpm/npm/yarn workspaces and Turborepo layouts. The backend's workspace dependencies are built before it (pnpm), the root lockfile is used, and the pnpm version is pinned from `packageManager` or the lockfile format.
+   - Env-var names are matched per framework: `VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `VUE_APP_`, `NG_APP_`, `PUBLIC_` (SvelteKit/Astro), `NUXT_PUBLIC_`, `GATSBY_`, `REMIX_PUBLIC_`.
 3. **Pre-flight checks.** It flags hardcoded `http://localhost:5000` URLs (with file:line), a backend that ignores `process.env.PORT` or only listens on localhost, `nodemon` in `start`, and missing SPA rewrites for React Router.
 4. **Asks only for real secrets.** It reads `.env.example`. Keys it can fill itself (API URL, CORS, `PORT`) are handled automatically. Values from your local `.env` are offered, unless they point at localhost. Non-secret defaults are used as-is. For the rest it prompts, or reads `SHIPONE_ENV_<KEY>` in `--yes` mode. Keys already set on the provider aren't asked for again. All of this happens **before** anything is created.
 5. **Creates or reuses services.** It creates or reuses the Vercel project (linked to GitHub, deploy-on-push off) and the Render web service (auto-deploy off, free plan by default). The backend URL goes into `VITE_API_URL` (or whatever name your code already uses). The frontend URL goes into `CORS_ORIGIN` and `FRONTEND_URL`, plus any matching key in `.env.example` such as `CLIENT_URL`.
@@ -113,6 +114,9 @@ npm install
 npm test          # unit tests + end-to-end CLI tests against a local fake of the Vercel/Render APIs
 npm run typecheck
 npm run dev -- deploy --dry-run   # run from source
+npm run smoke     # slow: install, build and boot a real app per supported stack (see below)
 ```
+
+`npm run smoke` writes a small real project for each popular stack (pnpm monorepo + TypeScript Fastify, Express, Hono, Yarn 4, FastAPI, Flask, Django, uv, Poetry, Pipenv, Go, Sinatra, ...), runs ShipOne's detection on it, then runs the detected build and start commands in a Render-like environment (no global pnpm, Python in a virtualenv, `$PORT` set) and checks the server answers HTTP. Add `--all` to include Rust, or pass words to filter: `npm run smoke -- fastapi go`. Stacks whose toolchain isn't installed are skipped.
 
 See [docs/PLAN.md](docs/PLAN.md) for the design, v1 scope and roadmap.

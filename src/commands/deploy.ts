@@ -2,7 +2,7 @@ import path from "node:path";
 import pc from "picocolors";
 import { checkBackend, checkFrontend, type Finding } from "../core/checks.js";
 import type { Context } from "../core/context.js";
-import { detectApps, detectBackend, detectFrontend, pickObvious, type BackendApp, type FrontendApp } from "../core/detect.js";
+import { detectApps, detectBackend, detectFrontend, pickObvious, VERCEL_FRAMEWORK_SLUG, type BackendApp, type FrontendApp } from "../core/detect.js";
 import {
   BACKEND_FRONTEND_URL_KEY,
   findEnvExample,
@@ -199,7 +199,7 @@ export async function buildPlan(ctx: Context, git: GitInfo, commit: CommitRef): 
       frontendApp = detectFrontend(git.root, repoConfig.frontend.path);
       if (!frontendApp) {
         throw new ShipOneError(
-          `${REPO_CONFIG_FILE} says the frontend is in "${repoConfig.frontend.path}", but no frontend app was found there. Supported: Vite, Next.js, CRA, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix.`,
+          `${REPO_CONFIG_FILE} says the frontend is in "${repoConfig.frontend.path}", but no frontend app was found there. Supported: Vite, Next.js, CRA, Vue CLI, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix, React Router, SolidStart.`,
         );
       }
     }
@@ -218,7 +218,7 @@ export async function buildPlan(ctx: Context, git: GitInfo, commit: CommitRef): 
   }
   if (!frontendApp && !backendApp) {
     throw new ShipOneError(
-      "Couldn't find a frontend (Vite, Next.js, CRA, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix) or backend (Node, Python, Go, Rust, Ruby, Docker) in this repo.",
+      "Couldn't find a frontend (Vite, Next.js, CRA, Vue CLI, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix, React Router, SolidStart) or backend (Node, Python, Go, Rust, Ruby, Docker) in this repo.",
       `If your app lives somewhere unusual, create ${REPO_CONFIG_FILE} with frontend.path / backend.path.`,
     );
   }
@@ -517,7 +517,7 @@ export async function deploy(ctx: Context, opts: DeployOptions = {}): Promise<De
     spin.start(feFound.project ? `Using ${feHost.label} project "${feFound.name}"` : `Creating ${feHost.label} project "${feFound.name}"`);
     const project =
       feFound.project ??
-      (await feHost.createProject({ name: feFound.name, repo: git, rootDirectory: plan.frontend.app.path, framework: plan.frontend.app.framework }));
+      (await feHost.createProject({ name: feFound.name, repo: git, rootDirectory: plan.frontend.app.path, framework: VERCEL_FRAMEWORK_SLUG[plan.frontend.app.framework] }));
     const gitDeploysOff = !feFound.needsSetup || (await feHost.disableGitDeployments(project.id));
     spin.stop(`${feHost.label} project "${project.name}" ready`);
     if (!gitDeploysOff) {

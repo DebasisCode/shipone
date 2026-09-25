@@ -58,6 +58,8 @@ In the usual case each side builds exactly once.
 - `test/providers.test.ts`: the HTTP client (retries, errors) and both provider clients, checked against request shapes from the official specs (Render's public OpenAPI schema, `@vercel/sdk` models).
 - `test/deploy.test.ts`: the whole deploy flow against an in-memory fake of both APIs. Covers first run, redeploys, lost state, deleted services, name clashes, late frontend URL, branch switches, build failures, missing secrets, dry runs and `deploy: false`.
 - `test/cli.e2e.test.ts`: the real CLI as a subprocess over HTTP against the fake APIs.
+- `test/detect.test.ts`: real-world repo shapes per stack (pnpm/turbo monorepos, Yarn 4, npm workspaces, FastAPI/Flask/Django layouts, Poetry/uv/Pipenv, Go `cmd/` layouts, Cargo workspaces, Rails/Sinatra) and the exact build/start commands they must produce.
+- `npm run smoke` (`test/smoke/`): not part of `npm test`. Writes a small real project per stack, runs detection, then actually runs the detected build and start commands in a Render-like environment (no global pnpm, Python inside a virtualenv, `$PORT` set) and checks the server answers HTTP.
 
 ### Still to verify against real accounts
 
