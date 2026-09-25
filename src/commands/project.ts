@@ -72,7 +72,7 @@ export async function logs(ctx: Context, target: string | undefined, opts: { lin
   }
 }
 
-const FRONTEND_PREFIX = /^(VITE_|NEXT_PUBLIC_|REACT_APP_)/;
+const FRONTEND_PREFIX = /^(VITE_|NEXT_PUBLIC_|REACT_APP_|NG_APP_|PUBLIC_|NUXT_PUBLIC_|GATSBY_|REMIX_PUBLIC_)/;
 
 function pickTarget(state: RepoState, key: string, opts: { frontend?: boolean; backend?: boolean }): "frontend" | "backend" {
   if (opts.frontend && opts.backend) throw new ShipOneError("Pass only one of --frontend / --backend.");

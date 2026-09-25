@@ -25,6 +25,8 @@ export interface BackendConfig {
   provider?: BackendProviderName;
   buildCommand?: string;
   startCommand?: string;
+  /** Repo-relative Dockerfile path when the backend builds from a Dockerfile. */
+  dockerfilePath?: string;
 }
 
 /** The versioned, per-repo config. Highest priority in preference resolution. */
@@ -100,7 +102,8 @@ export function validateRepoConfig(raw: unknown): RepoConfig {
       }
       const buildCommand = optString(b, "buildCommand", "backend", errors);
       const startCommand = optString(b, "startCommand", "backend", errors);
-      if (p) cfg.backend = { path: normalizeAppPath(p), provider: provider as BackendProviderName | undefined, buildCommand, startCommand };
+      const dockerfilePath = optString(b, "dockerfilePath", "backend", errors);
+      if (p) cfg.backend = { path: normalizeAppPath(p), provider: provider as BackendProviderName | undefined, buildCommand, startCommand, dockerfilePath };
     }
   }
 

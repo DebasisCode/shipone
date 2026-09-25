@@ -17,8 +17,8 @@ export interface Finding {
 }
 
 const LOCALHOST_URL = /\b(?:https?|wss?|mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis):\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?[^\s'"`)]*/;
-const CONFIG_FILE = /(?:^|[\\/])(?:vite|next|webpack|vitest|jest|tailwind|postcss|eslint|babel)\.config\.[mc]?[jt]s$|(?:^|[\\/])setupProxy\.js$/;
-const TEST_FILE = /\.(?:test|spec)\.[mc]?[jt]sx?$|[\\/]__tests__[\\/]/;
+const CONFIG_FILE = /(?:^|[\\/])(?:vite|next|webpack|vitest|jest|tailwind|postcss|eslint|babel|angular|svelte|astro|nuxt)\.config\.[mc]?[jt]s$|(?:^|[\\/])setupProxy\.js$/;
+const TEST_FILE = /\.(?:test|spec)\.[mc]?[jt]sx?$|[\\/]__tests__[\\/]|_test\.go$|_spec\.rb$|test_.*\.py$|.*_test\.py$/;
 
 interface Hit {
   file: string;
@@ -68,7 +68,7 @@ function anyMatch(root: string, appPath: string, re: RegExp): boolean {
 }
 
 const envAccess = (framework: FrontendApp["framework"], name: string) =>
-  framework === "vite" ? `import.meta.env.${name}` : `process.env.${name}`;
+  framework === "vite" || framework === "sveltekit" || framework === "astro" ? `import.meta.env.${name}` : `process.env.${name}`;
 
 export function checkFrontend(root: string, app: FrontendApp, hasBackend: boolean): Finding[] {
   const findings: Finding[] = [];
@@ -100,16 +100,29 @@ export function checkFrontend(root: string, app: FrontendApp, hasBackend: boolea
   return findings;
 }
 
+/** Per-runtime hints for reading $PORT. Empty for runtimes where we can't scan it. */
+const PORT_HINT: Partial<Record<BackendApp["runtime"], { re: RegExp; fix: string }>> = {
+  node: { re: /process\.env\.PORT\b|process\.env\[["']PORT["']\]|\{[^}]*\bPORT\b[^}]*\}\s*=\s*process\.env/, fix: "app.listen(process.env.PORT || 5000)" },
+  python: { re: /\b(?:PORT|port)\b\s*(?:=|\)|,|\bin\b)|--port\b|getenv\(\s*["']PORT["']|environ(?:\.get)?\(\s*["']PORT["']|\bint\(os\.environ\["PORT"\]\)/, fix: "port = int(os.getenv(\"PORT\", 8000))" },
+  go: { re: /os\.Getenv\(\s*["']PORT["']\)|LookupEnv\(\s*["']PORT["']|\bPORT\b/, fix: 'port := os.Getenv("PORT")' },
+  rust: { re: /env::var\(\s*["']PORT["']\)|\bPORT\b/, fix: 'let port = env::var("PORT").unwrap_or_else(|_| "8080".into());' },
+  ruby: { re: /\bENV\[["']PORT["']\]|\bPORT\b|--port\b/, fix: "Port = ENV.fetch(\"PORT\", 3000)" },
+};
+
 export function checkBackend(root: string, app: BackendApp): Finding[] {
   const findings: Finding[] = [];
+
+  // Docker: the image defines its own build and start; nothing else to check.
+  if (app.runtime === "docker") return findings;
+
   if (!app.startCommand) {
     findings.push({
       level: "error",
       role: "backend",
       message: "Couldn't work out how to start the backend.",
-      fix: `Add a "start" script to ${app.path}/package.json (e.g. "node server.js"), or set backend.startCommand in .shipone.yml.`,
+      fix: `Set backend.startCommand in ${app.path === "." ? "" : `${app.path}/"`.replace(/\/"$/, "/")}.shipone.yml, or add a start script.`,
     });
-  } else if (/\bnodemon\b/.test(readStartScript(root, app))) {
+  } else if (app.runtime === "node" && /\bnodemon\b/.test(readStartScript(root, app))) {
     findings.push({
       level: "warn",
       role: "backend",
@@ -118,23 +131,27 @@ export function checkBackend(root: string, app: BackendApp): Finding[] {
     });
   }
 
-  if (!anyMatch(root, app.path, /process\.env\.PORT\b|process\.env\[["']PORT["']\]|\{[^}]*\bPORT\b[^}]*\}\s*=\s*process\.env/)) {
+  const portHint = PORT_HINT[app.runtime];
+  if (portHint && !anyMatch(root, app.path, portHint.re)) {
     findings.push({
       level: "warn",
       role: "backend",
-      message: "The backend doesn't read process.env.PORT. Render tells your app which port to use via $PORT.",
-      fix: "app.listen(process.env.PORT || 5000)",
+      message: `The backend doesn't read the PORT env var. Render tells your app which port to use via $PORT.`,
+      fix: portHint.fix,
     });
   }
 
-  for (const h of scan(root, app.path, /\.listen\([^)]*["'](?:localhost|127\.0\.0\.1)["']/).slice(0, 3)) {
-    findings.push({
-      level: "warn",
-      role: "backend",
-      location: `${h.file}:${h.line}`,
-      message: "The server only listens on localhost, so it won't accept outside traffic.",
-      fix: "Drop the host argument (or use 0.0.0.0).",
-    });
+  const listenHost = LISTEN_HOST[app.runtime];
+  if (listenHost) {
+    for (const h of scan(root, app.path, listenHost.re).slice(0, 3)) {
+      findings.push({
+        level: "warn",
+        role: "backend",
+        location: `${h.file}:${h.line}`,
+        message: "The server only listens on localhost, so it won't accept outside traffic.",
+        fix: listenHost.fix,
+      });
+    }
   }
 
   for (const h of scan(root, app.path, LOCALHOST_URL).slice(0, 10)) {
@@ -144,12 +161,20 @@ export function checkBackend(root: string, app: BackendApp): Finding[] {
       location: `${h.file}:${h.line}`,
       message: `Hardcoded local URL: ${h.text.slice(0, 120)}`,
       fix: /cors|origin/i.test(h.text)
-        ? "Use process.env.CORS_ORIGIN; ShipOne sets it to your frontend URL."
+        ? "Read it from an env var (e.g. CORS_ORIGIN); ShipOne sets it to your frontend URL."
         : "Read it from an env var (and list it in .env.example) so production can use a real value.",
     });
   }
   return findings;
 }
+
+/** Per-language "bound to 127.0.0.1" patterns. */
+const LISTEN_HOST: Partial<Record<BackendApp["runtime"], { re: RegExp; fix: string }>> = {
+  node: { re: /\.listen\([^)]*["'](?:localhost|127\.0\.0\.1)["']/, fix: "Drop the host argument (or use 0.0.0.0)." },
+  python: { re: /(?:uvicorn|app\.run|run\()\s*[^)\n]*["'](?:127\.0\.0\.1|localhost)["']/, fix: "Bind to 0.0.0.0 (host=\"0.0.0.0\")." },
+  go: { re: /(?:ListenAndServe|Listen)\(\s*["'](?:127\.0\.0\.1|localhost)/, fix: "Listen on \":PORT\" instead of \"127.0.0.1:PORT\"." },
+  ruby: { re: /(?:set\s+:bind|:Host)\s*(?:=>|,)\s*["'](?:127\.0\.0\.1|localhost)["']/, fix: 'set :bind, "0.0.0.0".' },
+};
 
 function readStartScript(root: string, app: BackendApp): string {
   try {

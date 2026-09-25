@@ -122,6 +122,7 @@ describe("RenderHost against the fake API", () => {
     repo: { owner: "me", repo: "app" },
     branch: "main",
     rootDir: "server",
+    runtime: "node" as const,
     buildCommand: "npm ci",
     startCommand: "npm start",
     env: [{ key: "CORS_ORIGIN", value: "https://app.vercel.app" }],

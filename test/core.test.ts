@@ -163,14 +163,20 @@ describe("stack detection", () => {
     writeFiles(root, {
       "api/package.json": { dependencies: { fastify: "5" }, scripts: { build: "tsc", start: "node dist/index.js" } },
       "api/yarn.lock": "",
-      "srv/package.json": { dependencies: { express: "5" } },
+      "srv/package.json": { dependencies: { express: "5" }, scripts: { build: "tsc", start: "node server.js" } },
       "srv/pnpm-lock.yaml": "",
       "srv/server.js": "",
       "bare/package.json": { dependencies: { koa: "2" } },
     });
     expect(detectBackend(root, "api")).toMatchObject({ framework: "fastify", buildCommand: "yarn install --frozen-lockfile && yarn build", startCommand: "yarn start" });
-    expect(detectBackend(root, "srv")).toMatchObject({ packageManager: "pnpm", startCommand: "node server.js" });
-    expect(detectBackend(root, "srv")?.buildCommand).toContain("pnpm install --frozen-lockfile");
+    expect(detectBackend(root, "srv")).toMatchObject({
+      packageManager: "pnpm",
+      buildCommand: "npx pnpm@latest-10 install --frozen-lockfile && npx pnpm@latest-10 build",
+      startCommand: "npx pnpm@latest-10 start",
+    });
+    // Global installs (`npm i -g`, `corepack enable`) fail on Render's read-only system dirs.
+    expect(detectBackend(root, "srv")?.buildCommand).not.toContain("npm install -g");
+    expect(detectBackend(root, "srv")?.buildCommand).not.toContain("corepack");
     expect(detectBackend(root, "bare")).toMatchObject({ buildCommand: "npm install", startCommand: undefined });
   });
 
@@ -180,6 +186,122 @@ describe("stack detection", () => {
     expect(detectBackend(root, "tools")).toBeUndefined();
     expect(pickObvious("frontend", [{ path: "landing" }, { path: "client" }])?.path).toBe("client");
     expect(pickObvious("frontend", [{ path: "a" }, { path: "b" }])).toBeUndefined();
+  });
+
+  it("detects every supported JS frontend framework", () => {
+    const root = tmpDir();
+    writeFiles(root, {
+      "ng/package.json": { dependencies: { "@angular/core": "19" } },
+      "sv/package.json": { devDependencies: { "@sveltejs/kit": "2" } },
+      "as/package.json": { dependencies: { astro: "5" } },
+      "nx/package.json": { dependencies: { nuxt: "4" } },
+      "ga/package.json": { dependencies: { gatsby: "5" } },
+      "rm/package.json": { dependencies: { "@remix-run/react": "2" } },
+    });
+    expect(detectFrontend(root, "ng")).toMatchObject({ framework: "angular", apiUrlEnv: "NG_APP_API_URL", apiUrlEnvFromCode: false });
+    expect(detectFrontend(root, "sv")).toMatchObject({ framework: "sveltekit", apiUrlEnv: "PUBLIC_API_URL" });
+    expect(detectFrontend(root, "as")).toMatchObject({ framework: "astro", apiUrlEnv: "PUBLIC_API_URL" });
+    expect(detectFrontend(root, "nx")).toMatchObject({ framework: "nuxt", apiUrlEnv: "NUXT_PUBLIC_API_URL" });
+    expect(detectFrontend(root, "ga")).toMatchObject({ framework: "gatsby", apiUrlEnv: "GATSBY_API_URL" });
+    expect(detectFrontend(root, "rm")).toMatchObject({ framework: "remix", apiUrlEnv: "REMIX_PUBLIC_API_URL" });
+  });
+
+  it("prefers the meta-framework over vite inside the same package.json", () => {
+    const root = tmpDir();
+    writeFiles(root, { "web/package.json": { dependencies: { astro: "5" }, devDependencies: { vite: "7" } } });
+    expect(detectFrontend(root, "web")).toMatchObject({ framework: "astro" });
+  });
+
+  it("detects NestJS and Hono node backends", () => {
+    const root = tmpDir();
+    writeFiles(root, {
+      "nest/package.json": { dependencies: { "@nestjs/core": "11" }, scripts: { start: "node dist/main.js" } },
+      "nest/package-lock.json": "{}",
+      "ho/package.json": { dependencies: { hono: "4" }, main: "server.js" },
+      "ho/server.js": "",
+    });
+    expect(detectBackend(root, "nest")).toMatchObject({ framework: "nestjs", runtime: "node", startCommand: "npm start" });
+    expect(detectBackend(root, "ho")).toMatchObject({ framework: "hono", runtime: "node", startCommand: "node server.js" });
+  });
+
+  it("detects Python backends: FastAPI, Flask and Django", () => {
+    const root = tmpDir();
+    writeFiles(root, {
+      "fa/requirements.txt": "fastapi\nuvicorn[standard]==0.30.0\n",
+      "fa/main.py": "app = ...\n",
+      "fl/requirements.txt": "flask\ngunicorn\n",
+      "fl/app.py": "app = ...\n",
+      "dj/requirements.txt": "django\ngunicorn\n",
+      "dj/manage.py": "",
+      "dj/myapp/settings.py": "",
+    });
+    expect(detectBackend(root, "fa")).toMatchObject({
+      framework: "fastapi",
+      runtime: "python",
+      packageManager: "pip",
+      buildCommand: "pip install -r requirements.txt",
+      startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT",
+    });
+    expect(detectBackend(root, "fl")).toMatchObject({
+      framework: "flask",
+      runtime: "python",
+      startCommand: "gunicorn -b 0.0.0.0:$PORT app:app",
+    });
+    expect(detectBackend(root, "dj")).toMatchObject({
+      framework: "django",
+      runtime: "python",
+      startCommand: "gunicorn -b 0.0.0.0:$PORT myapp.wsgi",
+    });
+  });
+
+  it("detects python backends without requirements.txt via pyproject.toml", () => {
+    const root = tmpDir();
+    writeFiles(root, { "pp/pyproject.toml": "[project]\nname = 'x'\ndependencies = ['fastapi']\n", "pp/main.py": "app = ...\n" });
+    expect(detectBackend(root, "pp")).toMatchObject({ framework: "fastapi", runtime: "python", packageManager: "pip" });
+    expect(detectBackend(root, "pp")?.buildCommand).toBe("pip install -r requirements.txt");
+  });
+
+  it("detects Go backends and their framework from go.mod", () => {
+    const root = tmpDir();
+    writeFiles(root, {
+      "gin-api/go.mod": "module example.com/api\n\ngo 1.22\n\nrequire github.com/gin-gonic/gin v1.10.0\n",
+      "plain/go.mod": "module example.com/plain\n\ngo 1.22\n",
+      "cmdsvc/go.mod": "module example.com/cmdsvc\n\ngo 1.22\n",
+      "cmdsvc/cmd/worker/main.go": "",
+      "cmdsvc/cmd/server/main.go": "",
+    });
+    expect(detectBackend(root, "gin-api")).toMatchObject({ framework: "gin", runtime: "go", buildCommand: "go build -o app .", startCommand: "./app" });
+    expect(detectBackend(root, "plain")).toMatchObject({ framework: "go", runtime: "go" });
+    expect(detectBackend(root, "cmdsvc")?.buildCommand).toBe("go build -o app ./cmd/server");
+  });
+
+  it("detects Rust, Ruby and Dockerfile backends", () => {
+    const root = tmpDir();
+    writeFiles(root, {
+      "rs/Cargo.toml": "[package]\nname = 'webapi'\n[dependencies]\naxum = '0.7'\n",
+      "rb/Gemfile": "source 'https://rubygems.org'\ngem 'rails'\n",
+      "dk/Dockerfile": "FROM node:22\nCMD [\"node\", \"server.js\"]\n",
+    });
+    expect(detectBackend(root, "rs")).toMatchObject({ framework: "axum", runtime: "rust", buildCommand: "cargo build --release", startCommand: "./target/release/webapi" });
+    expect(detectBackend(root, "rb")).toMatchObject({ framework: "rails", runtime: "ruby", startCommand: "bundle exec rails server -b 0.0.0.0 -p $PORT" });
+    expect(detectBackend(root, "dk")).toMatchObject({
+      framework: "docker",
+      runtime: "docker",
+      dockerfilePath: "./Dockerfile",
+      startCommand: undefined,
+    });
+  });
+
+  it("still prefers a package.json frontend over a Dockerfile in the same folder", () => {
+    const root = tmpDir();
+    writeFiles(root, {
+      "package.json": { dependencies: { express: "5" } },
+      "server.js": "",
+      "Dockerfile": "FROM node:22\n",
+    });
+    const d = detectApps(root);
+    expect(d.backends).toHaveLength(1);
+    expect(d.backends[0]).toMatchObject({ framework: "express", runtime: "node" });
   });
 });
 
@@ -206,7 +328,7 @@ describe("pre-flight checks", () => {
     });
     const app = detectBackend(root, "server")!;
     const msgs = checkBackend(root, app).map((f) => f.message);
-    expect(msgs.some((m) => m.includes("process.env.PORT"))).toBe(true);
+    expect(msgs.some((m) => m.includes("PORT env var"))).toBe(true);
     expect(msgs.some((m) => m.includes("only listens on localhost"))).toBe(true);
     expect(msgs.some((m) => m.includes("nodemon"))).toBe(true);
     expect(msgs.some((m) => m.includes("mongodb://localhost"))).toBe(true);
@@ -222,6 +344,37 @@ describe("pre-flight checks", () => {
     expect(checkFrontend(root, app, false).map((f) => f.message).join()).toContain("client-side routing");
     writeFiles(root, { "client/vercel.json": { rewrites: [{ source: "/(.*)", destination: "/index.html" }] } });
     expect(checkFrontend(root, app, false)).toEqual([]);
+  });
+
+  it("applies runtime-specific PORT/listen checks to Python and Go", () => {
+    const root = tmpDir();
+    writeFiles(root, {
+      "py/requirements.txt": "flask\n",
+      "py/app.py": "app.run(host='127.0.0.1')\n",
+      "go/go.mod": "module x\n\ngo 1.22\n",
+      "go/main.go": 'func main() { http.ListenAndServe("127.0.0.1:8080", nil) }\n',
+    });
+    const pyMsgs = checkBackend(root, detectBackend(root, "py")!).map((f) => f.message);
+    expect(pyMsgs.some((m) => m.includes("PORT env var"))).toBe(true);
+    expect(pyMsgs.some((m) => m.includes("only listens on localhost"))).toBe(true);
+    const goMsgs = checkBackend(root, detectBackend(root, "go")!).map((f) => f.message);
+    expect(goMsgs.some((m) => m.includes("PORT env var"))).toBe(true);
+
+    // Fixed versions are quiet.
+    writeFiles(root, {
+      "py2/requirements.txt": "flask\n",
+      "py2/app.py": 'import os\nport = int(os.getenv("PORT", 8000))\napp.run(host="0.0.0.0", port=port)\n',
+      "go2/go.mod": "module x\n\ngo 1.22\n",
+      "go2/main.go": 'func main() { port := os.Getenv("PORT"); http.ListenAndServe(":"+port, nil) }\n',
+    });
+    expect(checkBackend(root, detectBackend(root, "py2")!)).toEqual([]);
+    expect(checkBackend(root, detectBackend(root, "go2")!)).toEqual([]);
+  });
+
+  it("skips node-specific checks for Docker backends", () => {
+    const root = tmpDir();
+    writeFiles(root, { "Dockerfile": "FROM node:22\nEXPOSE 8080\n" });
+    expect(checkBackend(root, detectBackend(root, ".")!)).toEqual([]);
   });
 
   it("is quiet for a well-behaved app", () => {

@@ -48,7 +48,7 @@ interface RService {
   rootDir: string;
   autoDeploy: string;
   type: string;
-  serviceDetails: Record<string, unknown> & { url: string };
+  serviceDetails: Record<string, unknown> & { url: string; envSpecificDetails?: Record<string, unknown> };
   env: Map<string, string>;
 }
 
@@ -307,8 +307,15 @@ export class FakeCloud {
       const repoPath = String(body.repo ?? "").replace(/^https:\/\/github\.com\//, "");
       if (!this.canAccess(repoPath)) return { status: 400, body: { id: "invalid", message: "Could not access the repository. Make sure Render has access to it." } };
       const d = body.serviceDetails;
-      if (body.type !== "web_service" || !d?.runtime || !d?.plan || !d?.envSpecificDetails?.buildCommand || !d?.envSpecificDetails?.startCommand) {
+      const runtime = d?.runtime;
+      const esd = d?.envSpecificDetails ?? {};
+      const detailsOk =
+        runtime === "docker" ? typeof esd.dockerfilePath === "string" : Boolean(esd.buildCommand && esd.startCommand);
+      if (body.type !== "web_service" || !d?.plan || !detailsOk) {
         return { status: 400, body: { id: "invalid", message: "invalid service details" } };
+      }
+      if (runtime !== "docker" && !["node", "python", "go", "rust", "ruby", "elixir", "image"].includes(runtime)) {
+        return { status: 400, body: { id: "invalid", message: `unsupported runtime ${runtime}` } };
       }
       const id = this.nextId("srv-");
       const s: RService = {
@@ -329,13 +336,15 @@ export class FakeCloud {
       return { status: 201, body: { service: this.serviceJson(s), deployId: dep.id } };
     }
 
-    if ((m = path.match(/^\/services\/([^/]+)$/))) {
+      if ((m = path.match(/^\/services\/([^/]+)$/))) {
       const s = this.render.services.get(m[1]!);
       if (!s) return notFound;
       if (method === "GET") return { status: 200, body: this.serviceJson(s) };
       if (method === "PATCH") {
         if (body.branch) s.branch = body.branch;
         if (body.autoDeploy) s.autoDeploy = body.autoDeploy;
+        const esd = body.serviceDetails?.envSpecificDetails;
+        if (esd) s.serviceDetails = { ...s.serviceDetails, envSpecificDetails: { ...(s.serviceDetails.envSpecificDetails ?? {}), ...esd } };
         return { status: 200, body: this.serviceJson(s) };
       }
     }

@@ -41,7 +41,14 @@ export interface DeployPlan {
   /** True when .shipone.yml doesn't exist yet or changed. */
   writeConfig: boolean;
   frontend?: { app: FrontendApp; provider: FrontendProviderName; name: string };
-  backend?: { app: BackendApp; provider: BackendProviderName; name: string; buildCommand: string; startCommand?: string };
+  backend?: {
+    app: BackendApp;
+    provider: BackendProviderName;
+    name: string;
+    buildCommand: string;
+    startCommand?: string;
+    dockerfilePath?: string;
+  };
   findings: Finding[];
 }
 
@@ -192,7 +199,7 @@ export async function buildPlan(ctx: Context, git: GitInfo, commit: CommitRef): 
       frontendApp = detectFrontend(git.root, repoConfig.frontend.path);
       if (!frontendApp) {
         throw new ShipOneError(
-          `${REPO_CONFIG_FILE} says the frontend is in "${repoConfig.frontend.path}", but no Vite/Next/CRA app was found there.`,
+          `${REPO_CONFIG_FILE} says the frontend is in "${repoConfig.frontend.path}", but no frontend app was found there. Supported: Vite, Next.js, CRA, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix.`,
         );
       }
     }
@@ -200,7 +207,7 @@ export async function buildPlan(ctx: Context, git: GitInfo, commit: CommitRef): 
       backendApp = detectBackend(git.root, repoConfig.backend.path);
       if (!backendApp) {
         throw new ShipOneError(
-          `${REPO_CONFIG_FILE} says the backend is in "${repoConfig.backend.path}", but no Express/Fastify/Koa server was found there.`,
+          `${REPO_CONFIG_FILE} says the backend is in "${repoConfig.backend.path}", but no backend was found there. Supported: Node (Express, Fastify, Koa, Hapi, NestJS, Hono), Python (FastAPI, Flask, Django), Go, Rust, Ruby and Docker.`,
         );
       }
     }
@@ -211,7 +218,7 @@ export async function buildPlan(ctx: Context, git: GitInfo, commit: CommitRef): 
   }
   if (!frontendApp && !backendApp) {
     throw new ShipOneError(
-      "Couldn't find a frontend (Vite, Next.js, CRA) or backend (Express, Fastify, Koa) in this repo.",
+      "Couldn't find a frontend (Vite, Next.js, CRA, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix) or backend (Node, Python, Go, Rust, Ruby, Docker) in this repo.",
       `If your app lives somewhere unusual, create ${REPO_CONFIG_FILE} with frontend.path / backend.path.`,
     );
   }
@@ -237,6 +244,7 @@ export async function buildPlan(ctx: Context, git: GitInfo, commit: CommitRef): 
       name: frontendApp ? `${base}-api` : base,
       buildCommand: repoConfig.backend?.buildCommand ?? backendApp.buildCommand,
       startCommand: repoConfig.backend?.startCommand ?? backendApp.startCommand,
+      dockerfilePath: backendApp.dockerfilePath,
     };
     repoConfig.backend = { ...repoConfig.backend, path: backendApp.path, provider };
     const withStart = { ...backendApp, startCommand: plan.backend.startCommand };
@@ -258,8 +266,11 @@ function describePlan(plan: DeployPlan): string {
   if (plan.backend) {
     const b = plan.backend;
     lines.push(`${pc.bold("Backend")}   ${at(b.app.path)} (${b.app.framework}) → ${PROVIDER_LABELS[b.provider]} service "${b.name}"`);
-    lines.push(`           build: ${b.buildCommand}`);
-    lines.push(`           start: ${b.startCommand ?? pc.red("(unknown)")}`);
+    if (b.app.runtime === "docker") lines.push(`           dockerfile: ${b.dockerfilePath ?? "./Dockerfile"} (image CMD starts the service)`);
+    else {
+      lines.push(`           build: ${b.buildCommand}`);
+      lines.push(`           start: ${b.startCommand ?? pc.red("(unknown)")}`);
+    }
     if (plan.frontend) lines.push(`           frontend URL goes in ${pc.cyan("CORS_ORIGIN")} and ${pc.cyan("FRONTEND_URL")}`);
   }
   lines.push(`${pc.bold("Commit")}    ${plan.commit.owner}/${plan.commit.repo}@${plan.commit.branch} ${short(plan.commit.sha)}`);
@@ -496,7 +507,7 @@ export async function deploy(ctx: Context, opts: DeployOptions = {}): Promise<De
     });
     if (!switchBranch) throw new ShipOneError("Nothing was deployed.", `Check out "${tracked}" and run shipone deploy again.`);
   }
-  if (plan.backend && !beFound?.service && !plan.backend.startCommand) {
+  if (plan.backend && !beFound?.service && !plan.backend.startCommand && plan.backend.app.runtime !== "docker") {
     throw new ShipOneError("Can't create the backend without a start command.");
   }
 
@@ -535,8 +546,10 @@ export async function deploy(ctx: Context, opts: DeployOptions = {}): Promise<De
         repo: git,
         branch: commit.branch,
         rootDir: plan.backend.app.path,
+        runtime: plan.backend.app.runtime,
         buildCommand: plan.backend.buildCommand,
         startCommand: plan.backend.startCommand!,
+        dockerfilePath: plan.backend.dockerfilePath,
         env: [...beSecrets, ...managed],
       });
       spin.stop(`Created ${beHost.label} service ${pc.cyan(created.url)}`);
@@ -544,7 +557,18 @@ export async function deploy(ctx: Context, opts: DeployOptions = {}): Promise<De
     } else {
       const svc = beFound.service;
       const adopted = !saved.backend || saved.backend.serviceId !== svc.id;
-      if (switchBranch || adopted) await beHost.configure(svc.id, { branch: switchBranch ? commit.branch : undefined, disableAutoDeploy: adopted });
+      // Sync drifted build/start commands (e.g. a fixed generator or a .shipone.yml change).
+      const commandsDrifted = svc.buildCommand !== plan.backend.buildCommand || svc.startCommand !== plan.backend.startCommand;
+      if (switchBranch || adopted || commandsDrifted) {
+        if (commandsDrifted) ui.info(`Updating build/start commands on ${beHost.label} to match the current plan.`);
+        await beHost.configure(svc.id, {
+          branch: switchBranch ? commit.branch : undefined,
+          disableAutoDeploy: adopted,
+          buildCommand: commandsDrifted ? plan.backend.buildCommand : undefined,
+          startCommand: commandsDrifted ? plan.backend.startCommand : undefined,
+          dockerfilePath: commandsDrifted && plan.backend.app.runtime === "docker" ? plan.backend.dockerfilePath : undefined,
+        });
+      }
       const updates = [...beSecrets, ...managed];
       if (updates.length) {
         spin.start(`Updating ${beHost.label} env vars`);

@@ -65,7 +65,10 @@ Add `--yes` before any command to run without prompts (CI, scripts). It fails wi
 ## What `shipone deploy` does
 
 1. **Checks git.** Your branch must be on GitHub. If you have unpushed commits, it stops, or offers to deploy what's already on GitHub.
-2. **Detects the stack.** It looks in `client/`, `frontend/`, `web/`, `server/`, `backend/`, `api/`, `apps/*`, `packages/*` and the repo root. It supports Vite, Next.js and Create React App frontends, and Express, Fastify, Koa and Hapi backends (npm, yarn or pnpm).
+2. **Detects the stack.** It looks in `client/`, `frontend/`, `web/`, `server/`, `backend/`, `api/`, `apps/*`, `packages/*` and the repo root.
+   - **Frontends:** Vite, Next.js, Create React App, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix (npm, yarn or pnpm).
+   - **Backends:** Node (Express, Fastify, Koa, Hapi, NestJS, Hono), Python (FastAPI, Flask, Django — pip, Poetry or uv), Go (Gin, Echo, Fiber, chi), Rust (Axum, Actix, Rocket), Ruby (Rails, Sinatra) — or anything with a `Dockerfile`.
+   - Env-var names are matched per framework: `VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `NG_APP_`, `PUBLIC_` (SvelteKit/Astro), `NUXT_PUBLIC_`, `GATSBY_`, `REMIX_PUBLIC_`.
 3. **Pre-flight checks.** It flags hardcoded `http://localhost:5000` URLs (with file:line), a backend that ignores `process.env.PORT` or only listens on localhost, `nodemon` in `start`, and missing SPA rewrites for React Router.
 4. **Asks only for real secrets.** It reads `.env.example`. Keys it can fill itself (API URL, CORS, `PORT`) are handled automatically. Values from your local `.env` are offered, unless they point at localhost. Non-secret defaults are used as-is. For the rest it prompts, or reads `SHIPONE_ENV_<KEY>` in `--yes` mode. Keys already set on the provider aren't asked for again. All of this happens **before** anything is created.
 5. **Creates or reuses services.** It creates or reuses the Vercel project (linked to GitHub, deploy-on-push off) and the Render web service (auto-deploy off, free plan by default). The backend URL goes into `VITE_API_URL` (or whatever name your code already uses). The frontend URL goes into `CORS_ORIGIN` and `FRONTEND_URL`, plus any matching key in `.env.example` such as `CLIENT_URL`.
@@ -89,6 +92,7 @@ backend:
   provider: render
   buildCommand: npm ci    # optional overrides
   startCommand: npm start
+  dockerfilePath: ./Dockerfile # when the backend builds from a Dockerfile
 ```
 
 Providers are chosen in this order: `.shipone.yml`, then the per-repo override (`shipone config set backend render --repo`), then account defaults, then ShipOne asks you.

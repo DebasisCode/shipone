@@ -1,4 +1,5 @@
 import { ShipOneError } from "../core/errors.js";
+import type { BackendRuntime } from "../core/detect.js";
 import { repoUrl, type GitHubRepo } from "../core/git.js";
 import { ApiClient, ApiError, type FetchLike } from "./http.js";
 import type { BackendHost, BackendService, CommitRef, DeployState, DeployStatus, EnvVar } from "./types.js";
@@ -13,7 +14,7 @@ interface RenderService {
   repo?: string;
   branch?: string;
   dashboardUrl?: string;
-  serviceDetails?: { url?: string };
+  serviceDetails?: { url?: string; envSpecificDetails?: { buildCommand?: string; startCommand?: string; dockerfilePath?: string } };
 }
 
 interface RenderDeploy {
@@ -118,11 +119,16 @@ export class RenderHost implements BackendHost {
     repo: GitHubRepo;
     branch: string;
     rootDir: string;
+    runtime: BackendRuntime;
     buildCommand: string;
     startCommand: string;
+    dockerfilePath?: string;
     env: EnvVar[];
   }): Promise<BackendService & { initialDeployId?: string }> {
     try {
+      // Docker services build from a Dockerfile; the container's own CMD/ENTRYPOINT
+      // is the start command, and Render needs the build/start fields left empty.
+      const docker = input.runtime === "docker";
       const res = await this.api.post<{ service: RenderService; deployId?: string }>("/services", {
         type: "web_service",
         name: input.name,
@@ -134,10 +140,12 @@ export class RenderHost implements BackendHost {
         autoDeploy: "no",
         envVars: input.env.map((e) => ({ key: e.key, value: e.value })),
         serviceDetails: {
-          runtime: "node",
+          runtime: docker ? "docker" : input.runtime,
           plan: this.plan,
           region: this.region,
-          envSpecificDetails: { buildCommand: input.buildCommand, startCommand: input.startCommand },
+          envSpecificDetails: docker
+            ? { dockerfilePath: input.dockerfilePath ?? "./Dockerfile", dockerCommand: "", dockerContext: "." }
+            : { buildCommand: input.buildCommand, startCommand: input.startCommand },
         },
       });
       return { ...toService(res.service), initialDeployId: res.deployId };
@@ -155,10 +163,18 @@ export class RenderHost implements BackendHost {
     }
   }
 
-  async configure(serviceId: string, opts: { branch?: string; disableAutoDeploy?: boolean }): Promise<void> {
-    const body: Record<string, string> = {};
+  async configure(
+    serviceId: string,
+    opts: { branch?: string; disableAutoDeploy?: boolean; buildCommand?: string; startCommand?: string; dockerfilePath?: string },
+  ): Promise<void> {
+    const body: Record<string, unknown> = {};
     if (opts.branch) body.branch = opts.branch;
     if (opts.disableAutoDeploy) body.autoDeploy = "no";
+    const details: Record<string, unknown> = {};
+    if (opts.buildCommand) details.buildCommand = opts.buildCommand;
+    if (opts.startCommand) details.startCommand = opts.startCommand;
+    if (opts.dockerfilePath) details.dockerfilePath = opts.dockerfilePath;
+    if (Object.keys(details).length) body.serviceDetails = { envSpecificDetails: details };
     if (Object.keys(body).length) await this.api.patch(`/services/${serviceId}`, body);
   }
 
@@ -205,12 +221,15 @@ export class RenderHost implements BackendHost {
 }
 
 function toService(s: RenderService): BackendService {
+  const details = s.serviceDetails?.envSpecificDetails as { buildCommand?: string; startCommand?: string; dockerfilePath?: string } | undefined;
   return {
     id: s.id,
     name: s.name,
     url: s.serviceDetails?.url ?? `https://${s.name}.onrender.com`,
     branch: s.branch,
     repo: repoFromUrl(s.repo),
+    buildCommand: details?.buildCommand,
+    startCommand: details?.startCommand,
     dashboardUrl: s.dashboardUrl,
   };
 }

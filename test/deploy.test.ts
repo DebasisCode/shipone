@@ -108,6 +108,53 @@ describe("shipone deploy: first run", () => {
     expect(service!.env.get("JWT_SECRET")).toBe("typed-secret");
     expect(ui.asked).toHaveLength(3);
   });
+
+  it("deploys a Vite + FastAPI stack with the python runtime and CORS wiring", async () => {
+    const files = {
+      "client/package.json": { scripts: { build: "vite build" }, devDependencies: { vite: "^7.0.0" } },
+      "client/src/api.js": "export const api = (p) => fetch(`${import.meta.env.VITE_API_URL}${p}`);\n",
+      "client/.env.example": "VITE_API_URL=\n",
+      "server/requirements.txt": "fastapi\nuvicorn\ncors\n",
+      "server/main.py": "import os\nfrom fastapi import FastAPI\napp = FastAPI()\nport = int(os.getenv('PORT', 8000))\n",
+      "server/.env.example": "CORS_ORIGIN=http://localhost:5173\n",
+    };
+    const { cloud, ctx } = setup({ files });
+    const result = await deploy(ctx);
+    const [service] = [...cloud.render.services.values()];
+    expect(service).toMatchObject({
+      name: "app-api",
+      rootDir: "server",
+      autoDeploy: "no",
+      serviceDetails: { runtime: "python", envSpecificDetails: { buildCommand: "pip install -r requirements.txt", startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT" } },
+    });
+    expect(service!.env.get("CORS_ORIGIN")).toBe("https://app.vercel.app");
+    expect(service!.env.get("FRONTEND_URL")).toBe("https://app.vercel.app");
+    const [project] = [...cloud.vercel.projects.values()];
+    expect(project!.env.find((e) => e.key === "VITE_API_URL")?.value).toBe("https://app-api.onrender.com");
+    expect(result).toMatchObject({ backend: { url: "https://app-api.onrender.com", status: { state: "ready" } } });
+  });
+
+  it("deploys a Dockerfile backend with docker runtime details", async () => {
+    const files = {
+      "server/Dockerfile": "FROM python:3.12-slim\nWORKDIR /app\nCOPY . .\nCMD [\"uvicorn\", \"main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n",
+      "server/main.py": "app = ...\n",
+      "server/.env.example": "CORS_ORIGIN=\n",
+      "client/package.json": { scripts: { build: "vite build" }, devDependencies: { vite: "^7.0.0" } },
+      "client/src/api.js": "export const api = (p) => fetch(`${import.meta.env.VITE_API_URL}${p}`);\n",
+    };
+    const { cloud, ctx } = setup({ files });
+    await deploy(ctx);
+    expect(cloud.requestsTo("render", "POST", /^\/v1\/services$/)[0]!.body).toMatchObject({
+      serviceDetails: {
+        runtime: "docker",
+        plan: "free",
+        region: "oregon",
+        envSpecificDetails: { dockerfilePath: "./Dockerfile", dockerCommand: "", dockerContext: "." },
+      },
+    });
+    const [service] = [...cloud.render.services.values()];
+    expect(service!.env.get("CORS_ORIGIN")).toBe("https://app.vercel.app");
+  });
 });
 
 describe("shipone deploy: later runs", () => {
@@ -149,6 +196,20 @@ describe("shipone deploy: later runs", () => {
     await deploy(ctx);
     expect(cloud.render.services.size).toBe(1);
     expect(ui.text_("warn")).toContain('Render service "app-api" no longer exists');
+  });
+
+  it("syncs drifted build/start commands on redeploy", async () => {
+    const { cloud, ctx, ui } = setup();
+    await deploy(ctx);
+    const [service] = [...cloud.render.services.values()];
+    // Simulate a service created by an older shipone with a broken build command.
+    service!.serviceDetails!.envSpecificDetails!.buildCommand = "npm install -g pnpm && pnpm install --frozen-lockfile";
+    const before = cloud.requests.length;
+    await deploy(ctx);
+    const patch = cloud.requestsTo("render", "PATCH", /^\/v1\/services\/[^/]+$/).at(-1)!;
+    expect(patch.body).toMatchObject({ serviceDetails: { envSpecificDetails: { buildCommand: "npm ci" } } });
+    expect(cloud.requests.slice(before).some((r) => r.method === "POST" && r.path === "/v1/services")).toBe(false);
+    expect(ui.text_("info")).toContain("Updating build/start commands");
   });
 
   it("picks another name when the default one belongs to a different repo", async () => {

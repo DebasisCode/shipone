@@ -19,7 +19,7 @@ Supporting a new framework means adding one detector in `src/core/detect.ts`. Su
 ## v1 scope (this PR)
 
 - Hosts: Vercel for frontends, Render for backends.
-- Frontends: Vite, Next.js, Create React App. Backends: Node (Express, Fastify, Koa, Hapi), with npm, yarn or pnpm.
+- Frontends: Vite, Next.js, Create React App, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix. Backends: Node (Express, Fastify, Koa, Hapi, NestJS, Hono), Python (FastAPI, Flask, Django), Go (Gin, Echo, Fiber, chi), Rust (Axum, Actix, Rocket), Ruby (Rails, Sinatra), or a Dockerfile. With npm, yarn, pnpm, pip, Poetry, uv, cargo or bundler.
 - Layouts: `client/` + `server/`, the other common folder names, `apps/*`, `packages/*`, or a single app at the repo root. Frontend-only and backend-only repos also work.
 - Commands: `connect`, `disconnect`, `config`, `deploy` (+ `--dry-run`, `--force`), `status`, `logs`, `env set`, `env ls`, and a global `--yes`.
 
@@ -73,10 +73,9 @@ Smoke test: create a small Vite + Express repo, push it, then run `shipone conne
 
 ## Later (not in v1)
 
-1. Python backends: FastAPI and Django on Render (a detector plus `pip install` / `uvicorn` commands).
-2. More hosts: Railway and Fly.io for backends, Netlify for frontends. Each one implements `BackendHost` or `FrontendHost`.
-3. Database provisioning (Neon or Supabase), with `DATABASE_URL` wired in automatically.
-4. Rewriting hardcoded localhost URLs in code, not just flagging them.
-5. Plain-language "why did my deploy fail" explanations from build logs.
+1. More hosts: Railway and Fly.io for backends, Netlify for frontends. Each one implements `BackendHost` or `FrontendHost`.
+2. Database provisioning (Neon or Supabase), with `DATABASE_URL` wired in automatically.
+3. Rewriting hardcoded localhost URLs in code, not just flagging them.
+4. Plain-language "why did my deploy fail" explanations from build logs.
 6. Linked PR preview environments.
 7. SaaS: GitHub login, synced preferences, a dashboard. The deploy logic stays the same; only storage moves.

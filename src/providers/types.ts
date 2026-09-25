@@ -1,4 +1,5 @@
 import type { GitHubRepo } from "../core/git.js";
+import type { BackendRuntime } from "../core/detect.js";
 import type { BackendProviderName, FrontendProviderName } from "../core/types.js";
 
 export type DeployState = "queued" | "building" | "ready" | "failed" | "canceled";
@@ -57,6 +58,9 @@ export interface BackendService {
   branch?: string;
   /** "owner/repo" the service builds from, if any. */
   repo?: string;
+  /** Currently configured build command on the host, when known. */
+  buildCommand?: string;
+  startCommand?: string;
   dashboardUrl?: string;
 }
 
@@ -70,12 +74,19 @@ export interface BackendHost {
     repo: GitHubRepo;
     branch: string;
     rootDir: string;
+    /** Render runtime: node, python, go, rust, ruby or docker. */
+    runtime: BackendRuntime;
     buildCommand: string;
     startCommand: string;
+    /** Repo-relative Dockerfile path for runtime "docker" (e.g. ./Dockerfile). */
+    dockerfilePath?: string;
     env: EnvVar[];
   }): Promise<BackendService & { initialDeployId?: string }>;
-  /** Point the service at `branch` and/or turn off deploy-on-push. */
-  configure(serviceId: string, opts: { branch?: string; disableAutoDeploy?: boolean }): Promise<void>;
+  /** Point the service at `branch`, turn off deploy-on-push, and/or sync build/start commands. */
+  configure(
+    serviceId: string,
+    opts: { branch?: string; disableAutoDeploy?: boolean; buildCommand?: string; startCommand?: string; dockerfilePath?: string },
+  ): Promise<void>;
   listEnvKeys(serviceId: string): Promise<Set<string>>;
   setEnv(serviceId: string, vars: EnvVar[]): Promise<void>;
   deploy(serviceId: string, commit: CommitRef): Promise<DeployStatus>;
