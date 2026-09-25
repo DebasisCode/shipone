@@ -12,7 +12,7 @@ import {
   readLocalEnv,
 } from "../core/envfile.js";
 import { ShipOneError } from "../core/errors.js";
-import { readGitInfo, repoSlug, type GitInfo } from "../core/git.js";
+import { pushBranch, readGitInfo, repoSlug, type GitInfo } from "../core/git.js";
 import { resolveProvider } from "../core/preferences.js";
 import { readRepoConfig, REPO_CONFIG_FILE, writeRepoConfig, type RepoConfig } from "../core/repoConfig.js";
 import type { RepoState } from "../core/store.js";
@@ -71,10 +71,34 @@ export function serviceName(s: string): string {
 async function resolveCommit(ctx: Context, git: GitInfo): Promise<CommitRef> {
   const { ui } = ctx;
   if (!git.upstream || !git.remoteBranch || !git.upstreamSha) {
-    throw new ShipOneError(
-      `Branch "${git.branch}" isn't on GitHub yet, so Vercel/Render can't build it.`,
-      `Push it first: git push -u origin ${git.branch}`,
-    );
+    if (ui.interactive) {
+      const doPush = await ui.confirm({
+        message: `Branch "${git.branch}" hasn't been pushed to GitHub with tracking yet. Push to GitHub now?`,
+        initial: true,
+      });
+      if (doPush) {
+        const spin = ui.spinner();
+        spin.start(`Pushing "${git.branch}" to GitHub`);
+        try {
+          await pushBranch(git.root, git.branch);
+          spin.stop(`Pushed "${git.branch}" to GitHub.`);
+          git = await readGitInfo(git.root);
+        } catch (err) {
+          spin.fail("Failed to push to GitHub.");
+          throw new ShipOneError(`Could not push to GitHub: ${(err as Error).message}`, "Push manually with `git push -u origin <branch>`.");
+        }
+      } else {
+        throw new ShipOneError(
+          `Branch "${git.branch}" isn't on GitHub yet, so Vercel/Render can't build it.`,
+          `Push it first: git push -u origin ${git.branch}`,
+        );
+      }
+    } else {
+      throw new ShipOneError(
+        `Branch "${git.branch}" isn't on GitHub yet, so Vercel/Render can't build it.`,
+        `Push it first: git push -u origin ${git.branch}`,
+      );
+    }
   }
   let sha = git.headSha;
   if (git.ahead > 0) {
@@ -82,18 +106,43 @@ async function resolveCommit(ctx: Context, git: GitInfo): Promise<CommitRef> {
     const useRemote =
       ui.interactive &&
       (await ui.confirm({
-        message: `Deploy what's on GitHub (${short(git.upstreamSha)}) without them? Choose "No" to push first.`,
+        message: `Deploy what's on GitHub (${short(git.upstreamSha!)}) without them? Choose "No" to push first.`,
         initial: false,
       }));
-    if (!useRemote) throw new ShipOneError("Push your commits first so the deploy includes them.", "git push && shipone deploy");
-    sha = git.upstreamSha;
+    if (!useRemote) {
+      if (ui.interactive) {
+        const doPush = await ui.confirm({
+          message: "Push your local commits to GitHub now and deploy latest?",
+          initial: true,
+        });
+        if (doPush) {
+          const spin = ui.spinner();
+          spin.start("Pushing commits to GitHub");
+          try {
+            await pushBranch(git.root, git.branch);
+            spin.stop("Pushed latest commits to GitHub.");
+            git = await readGitInfo(git.root);
+            sha = git.headSha;
+          } catch (err) {
+            spin.fail("Failed to push to GitHub.");
+            throw new ShipOneError(`Could not push: ${(err as Error).message}`, "Push manually: git push");
+          }
+        } else {
+          throw new ShipOneError("Push your commits first so the deploy includes them.", "git push && shipone deploy");
+        }
+      } else {
+        throw new ShipOneError("Push your commits first so the deploy includes them.", "git push && shipone deploy");
+      }
+    } else {
+      sha = git.upstreamSha!;
+    }
   } else if (git.headSha !== git.upstreamSha) {
     // Behind or diverged: HEAD isn't on GitHub.
-    sha = git.upstreamSha;
+    sha = git.upstreamSha!;
     ui.warn(`Your local branch differs from ${git.upstream}; deploying ${short(sha)} from GitHub.`);
   }
   if (git.dirty) ui.warn("You have uncommitted changes. They won't be part of this deploy.");
-  return { owner: git.owner, repo: git.repo, branch: git.remoteBranch, sha };
+  return { owner: git.owner, repo: git.repo, branch: git.remoteBranch!, sha };
 }
 
 // ---------------------------------------------------------------------------

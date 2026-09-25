@@ -79,10 +79,20 @@ export async function readGitInfo(cwd: string): Promise<GitInfo> {
     throw new ShipOneError("You're in a detached HEAD state.", "Check out the branch you want to deploy, e.g. `git switch main`.");
   }
 
-  const upstream = await tryGit(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  let upstream = await tryGit(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
   let upstreamSha: string | undefined;
   let ahead = 0;
-  if (upstream) {
+  if (!upstream) {
+    // If upstream tracking wasn't explicitly set with -u, check if origin/<branch> exists
+    const remoteRefSha = await tryGit(root, ["rev-parse", "--verify", `refs/remotes/origin/${branch}`]);
+    if (remoteRefSha) {
+      upstream = `origin/${branch}`;
+      upstreamSha = remoteRefSha;
+      ahead = Number((await tryGit(root, ["rev-list", "--count", `refs/remotes/origin/${branch}..HEAD`])) ?? 0);
+      // Auto-set tracking so standard git tools know the upstream
+      await tryGit(root, ["branch", `--set-upstream-to=origin/${branch}`]);
+    }
+  } else {
     upstreamSha = await tryGit(root, ["rev-parse", "@{u}"]);
     ahead = Number((await tryGit(root, ["rev-list", "--count", "@{u}..HEAD"])) ?? 0);
   }
@@ -91,6 +101,10 @@ export async function readGitInfo(cwd: string): Promise<GitInfo> {
   const remoteBranch = upstream?.replace(/^[^/]+\//, "");
 
   return { ...gh, root, branch, headSha, upstream, remoteBranch, upstreamSha, ahead, dirty };
+}
+
+export async function pushBranch(cwd: string, branch: string): Promise<void> {
+  await git(cwd, ["push", "-u", "origin", branch]);
 }
 
 export const repoSlug = (r: GitHubRepo) => `${r.owner}/${r.repo}`;

@@ -28,7 +28,13 @@ interface Hit {
 
 function isComment(line: string) {
   const t = line.trim();
-  return t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") || t.startsWith("#");
+  return (
+    t.startsWith("//") ||
+    t.startsWith("*") ||
+    t.startsWith("/*") ||
+    t.startsWith("#") ||
+    /^console\.(?:log|info|debug|warn)\s*\(/.test(t)
+  );
 }
 
 function scan(root: string, appPath: string, re: RegExp): Hit[] {

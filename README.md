@@ -27,8 +27,13 @@ shipone deploy
 Requires Node 22.12+ and git.
 
 ```bash
-git clone https://github.com/debasiscode/shipone && cd shipone
-npm install && npm run build && npm link   # puts `shipone` on your PATH
+npm install -g shipone
+```
+
+Or run directly without installing:
+
+```bash
+npx shipone
 ```
 
 ## One-time setup

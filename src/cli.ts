@@ -14,12 +14,164 @@ const { version } = createRequire(import.meta.url)("../package.json") as { versi
 
 const program = new Command();
 
+function printBanner(ver: string, opts: { hasVercel: boolean; hasRender: boolean }) {
+  const S = ["███████╗", "██╔════╝", "███████╗", "╚════██║", "███████║", "╚══════╝"];
+  const H = ["██╗  ██╗", "██║  ██║", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"];
+  const I = ["██╗", "██║", "██║", "██║", "██║", "╚═╝"];
+  const P = ["██████╗ ", "██╔══██╗", "██████╔╝", "██╔═══╝ ", "██║     ", "╚═╝     "];
+  const O = [" ██████╗ ", "██╔═══██╗", "██║   ██║", "██║   ██║", "╚██████╔╝", " ╚═════╝ "];
+  const N = ["███╗   ██╗", "████╗  ██║", "██╔██╗ ██║", "██║╚██╗██║", "██║ ╚████║", "╚═╝  ╚═══╝"];
+  const E = ["███████╗", "██╔════╝", "█████╗  ", "██╔══╝  ", "███████╗", "╚══════╝"];
+
+  console.log();
+  for (let row = 0; row < 6; row++) {
+    const line =
+      pc.bold(pc.cyan(S[row])) + " " +
+      pc.bold(pc.cyan(H[row])) + " " +
+      pc.bold(pc.blue(I[row])) + " " +
+      pc.bold(pc.blue(P[row])) + "  " +
+      pc.bold(pc.magenta(O[row])) + " " +
+      pc.bold(pc.magenta(N[row])) + " " +
+      pc.bold(pc.yellow(E[row]));
+    console.log("  " + line);
+  }
+  console.log("  " + pc.dim("─".repeat(61)));
+  console.log(`  ${pc.bold(pc.cyan("ShipOne"))} ${pc.dim(`v${ver}`)} ${pc.dim("•")} ${pc.white("One-Command Full-Stack Deployment")}`);
+  console.log(`  ${pc.dim("Deploy local apps to Vercel & Render, wired automatically.")}`);
+
+  const vStatus = opts.hasVercel ? pc.green("● connected") : pc.yellow("○ not connected");
+  const rStatus = opts.hasRender ? pc.green("● connected") : pc.yellow("○ not connected");
+  console.log(`  ${pc.dim("Providers:")} ${pc.bold("Vercel")} ${vStatus}  ${pc.dim("│")}  ${pc.bold("Render")} ${rStatus}`);
+  console.log("  " + pc.dim("─".repeat(61)));
+  console.log();
+}
+
+async function runInteractiveMenu(ctx: Context) {
+  let hasVercel = Boolean(ctx.store.getToken("vercel"));
+  let hasRender = Boolean(ctx.store.getToken("render"));
+
+  printBanner(version, { hasVercel, hasRender });
+
+  if (!hasVercel && !hasRender) {
+    ctx.ui.info("No hosting providers connected yet.");
+    const firstChoice = await ctx.ui.select({
+      message: "What would you like to do?",
+      choices: [
+        { value: "connect", label: "Connect Vercel and Render", hint: "recommended first step" },
+        { value: "help", label: "Show CLI commands and help" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+
+    if (firstChoice === "help") {
+      program.help();
+      return;
+    }
+    if (firstChoice === "exit") {
+      return;
+    }
+
+    await connect(ctx, "vercel", {});
+    hasVercel = Boolean(ctx.store.getToken("vercel"));
+
+    if (hasVercel && !ctx.store.getToken("render")) {
+      const wantRender = await ctx.ui.confirm({
+        message: "Vercel connected. Connect Render for backend deployment now?",
+        initial: true,
+      });
+      if (wantRender) {
+        await connect(ctx, "render", {});
+      }
+    }
+  } else if (!hasVercel || !hasRender) {
+    const missing = !hasRender ? "Render" : "Vercel";
+    const missingRole = !hasRender ? "backend" : "frontend";
+    ctx.ui.info(`${!hasVercel ? "Render" : "Vercel"} is connected, but ${missing} (${missingRole}) is not connected yet.`);
+
+    const choice = await ctx.ui.select({
+      message: "What would you like to do?",
+      choices: [
+        { value: "connect-missing", label: `Connect ${missing}`, hint: `recommended for ${missingRole} deployment` },
+        { value: "deploy", label: "Deploy this project anyway", hint: "proceed with current configuration" },
+        { value: "dry-run", label: "Preview deploy plan (dry-run)", hint: "inspect without deploying" },
+        { value: "help", label: "Show CLI commands and help" },
+        { value: "exit", label: "Exit" },
+      ],
+    });
+
+    if (choice === "connect-missing") {
+      await connect(ctx, missing.toLowerCase(), {});
+    } else if (choice === "deploy") {
+      await deploy(ctx, {});
+      return;
+    } else if (choice === "dry-run") {
+      await deploy(ctx, { dryRun: true });
+      return;
+    } else if (choice === "help") {
+      program.help();
+      return;
+    } else if (choice === "exit") {
+      return;
+    }
+  }
+
+  // Refresh provider statuses
+  hasVercel = Boolean(ctx.store.getToken("vercel"));
+  hasRender = Boolean(ctx.store.getToken("render"));
+
+  const action = await ctx.ui.select({
+    message: "What would you like to do?",
+    choices: [
+      { value: "deploy", label: "Deploy this project", hint: "detect stack, wire URLs and CORS, and deploy" },
+      { value: "dry-run", label: "Preview deploy plan (dry-run)", hint: "inspect what would happen without deploying" },
+      { value: "status", label: "Check deployment status", hint: "live URLs and current deploy state" },
+      { value: "logs", label: "View deployment logs", hint: "backend runtime or frontend build logs" },
+      { value: "connect", label: "Manage provider tokens", hint: "connect or update Vercel / Render tokens" },
+      { value: "config", label: "Account defaults and config", hint: "view or edit default providers and regions" },
+      { value: "help", label: "Show CLI commands and help", hint: "view all command-line flags and options" },
+    ],
+  });
+
+  switch (action) {
+    case "deploy":
+      await deploy(ctx, {});
+      break;
+    case "dry-run":
+      await deploy(ctx, { dryRun: true });
+      break;
+    case "status":
+      await status(ctx);
+      break;
+    case "logs":
+      await logs(ctx, undefined, {});
+      break;
+    case "connect":
+      await connect(ctx, undefined, {});
+      break;
+    case "config":
+      await configShow(ctx);
+      break;
+    case "help":
+      program.help();
+      break;
+  }
+}
+
 program
   .name("shipone")
   .description("Deploy a full-stack app to your own Vercel + Render accounts with one command, wired together.")
   .version(version)
   .option("-y, --yes", "never prompt; use defaults and fail if input is required")
-  .showHelpAfterError();
+  .showHelpAfterError()
+  .action(
+    run(async (ctx) => {
+      if (!ctx.ui.interactive) {
+        program.help();
+        return;
+      }
+      await runInteractiveMenu(ctx);
+    }),
+  );
 
 /** Run a command with a fresh context and friendly error output. */
 function run<A extends unknown[]>(fn: (ctx: Context, ...args: A) => Promise<unknown> | unknown) {

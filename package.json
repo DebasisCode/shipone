@@ -1,7 +1,6 @@
 {
   "name": "shipone",
   "version": "0.1.0",
-  "private": true,
   "description": "Deploy a full-stack app (frontend + backend) to your own Vercel and Render accounts with one command, wired together.",
   "type": "module",
   "bin": {
@@ -13,8 +12,19 @@
   "engines": {
     "node": ">=22.12"
   },
+  "keywords": [
+    "cli",
+    "deployment",
+    "fullstack",
+    "vercel",
+    "render",
+    "devops"
+  ],
+  "author": "debasisCode",
+  "license": "MIT",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build && npm test",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

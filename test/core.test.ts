@@ -108,8 +108,10 @@ describe("Store", () => {
     const home = tmpDir();
     const store = new Store({ SHIPONE_HOME: home });
     store.setToken("vercel", "tok");
-    const mode = fs.statSync(path.join(home, "credentials.json")).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== "win32") {
+      const mode = fs.statSync(path.join(home, "credentials.json")).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
     expect(store.getToken("vercel")).toBe("tok");
     expect(new Store({ SHIPONE_HOME: home, VERCEL_TOKEN: "from-env" }).getToken("vercel")).toBe("from-env");
     store.setToken("vercel", undefined);
