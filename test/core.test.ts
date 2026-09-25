@@ -258,7 +258,9 @@ describe("stack detection", () => {
     const root = tmpDir();
     writeFiles(root, { "pp/pyproject.toml": "[project]\nname = 'x'\ndependencies = ['fastapi']\n", "pp/main.py": "app = ...\n" });
     expect(detectBackend(root, "pp")).toMatchObject({ framework: "fastapi", runtime: "python", packageManager: "pip" });
-    expect(detectBackend(root, "pp")?.buildCommand).toBe("pip install -r requirements.txt");
+    // No requirements.txt and no lockfile: pip can't install PEP 621 deps without building the project, uv can.
+    expect(detectBackend(root, "pp")?.buildCommand).toBe("pip install uv && uv pip install -r pyproject.toml && pip install uvicorn");
+    expect(detectBackend(root, "pp")?.startCommand).toBe("uvicorn main:app --host 0.0.0.0 --port $PORT");
   });
 
   it("detects Go backends and their framework from go.mod", () => {
@@ -349,8 +351,8 @@ describe("pre-flight checks", () => {
   it("applies runtime-specific PORT/listen checks to Python and Go", () => {
     const root = tmpDir();
     writeFiles(root, {
-      "py/requirements.txt": "flask\n",
-      "py/app.py": "app.run(host='127.0.0.1')\n",
+      "py/requirements.txt": "aiohttp\n",
+      "py/app.py": "web.run_app(app)\nuvicorn.run(app, host='127.0.0.1')\n",
       "go/go.mod": "module x\n\ngo 1.22\n",
       "go/main.go": 'func main() { http.ListenAndServe("127.0.0.1:8080", nil) }\n',
     });
@@ -369,6 +371,11 @@ describe("pre-flight checks", () => {
     });
     expect(checkBackend(root, detectBackend(root, "py2")!)).toEqual([]);
     expect(checkBackend(root, detectBackend(root, "go2")!)).toEqual([]);
+
+    // gunicorn/uvicorn started by ShipOne with $PORT and 0.0.0.0: the dev-server call doesn't matter.
+    writeFiles(root, { "py3/requirements.txt": "flask\n", "py3/app.py": "app = Flask(__name__)\nif __name__ == '__main__':\n    app.run(host='127.0.0.1')\n" });
+    expect(detectBackend(root, "py3")?.startCommand).toBe("gunicorn -b 0.0.0.0:$PORT app:app");
+    expect(checkBackend(root, detectBackend(root, "py3")!)).toEqual([]);
   });
 
   it("skips node-specific checks for Docker backends", () => {

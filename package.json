@@ -28,7 +28,8 @@
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "smoke": "tsx test/smoke/run.ts"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",

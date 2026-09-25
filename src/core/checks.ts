@@ -67,8 +67,9 @@ function anyMatch(root: string, appPath: string, re: RegExp): boolean {
   return false;
 }
 
+const IMPORT_META_ENV: FrontendApp["framework"][] = ["vite", "sveltekit", "astro", "react-router", "solidstart"];
 const envAccess = (framework: FrontendApp["framework"], name: string) =>
-  framework === "vite" || framework === "sveltekit" || framework === "astro" ? `import.meta.env.${name}` : `process.env.${name}`;
+  IMPORT_META_ENV.includes(framework) ? `import.meta.env.${name}` : `process.env.${name}`;
 
 export function checkFrontend(root: string, app: FrontendApp, hasBackend: boolean): Finding[] {
   const findings: Finding[] = [];
@@ -131,8 +132,11 @@ export function checkBackend(root: string, app: BackendApp): Finding[] {
     });
   }
 
+  // Start commands like `gunicorn -b 0.0.0.0:$PORT` / `uvicorn --port $PORT` bind the port themselves.
+  const startBindsPort = /\$PORT\b|puma -C /.test(app.startCommand ?? "");
+
   const portHint = PORT_HINT[app.runtime];
-  if (portHint && !anyMatch(root, app.path, portHint.re)) {
+  if (portHint && !startBindsPort && !anyMatch(root, app.path, portHint.re)) {
     findings.push({
       level: "warn",
       role: "backend",
@@ -142,7 +146,7 @@ export function checkBackend(root: string, app: BackendApp): Finding[] {
   }
 
   const listenHost = LISTEN_HOST[app.runtime];
-  if (listenHost) {
+  if (listenHost && !startBindsPort) {
     for (const h of scan(root, app.path, listenHost.re).slice(0, 3)) {
       findings.push({
         level: "warn",
