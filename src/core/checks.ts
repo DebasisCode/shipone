@@ -86,8 +86,8 @@ export function checkFrontend(root: string, app: FrontendApp, hasBackend: boolea
     findings.push({
       level: "warn",
       role: "frontend",
-      message: "This app uses client-side routing, so refreshing a page like /about will 404 on Vercel.",
-      fix: `Add ${app.path === "." ? "" : `${app.path}/`}vercel.json with {"rewrites": [{"source": "/(.*)", "destination": "/index.html"}]}`,
+      message: "This app uses client-side routing, so refreshing a page like /about will 404 after the deploy.",
+      fix: `Add ${app.path === "." ? "" : `${app.path}/`}vercel.json with {"rewrites": [{"source": "/(.*)", "destination": "/index.html"}]}, or a netlify.toml [[redirects]] rule from "/*" to "/index.html" with status 200`,
     });
   }
   if (hasBackend && !app.apiUrlEnvFromCode && !anyMatch(root, app.path, new RegExp(`\\b${app.apiUrlEnv}\\b`))) {
@@ -140,7 +140,7 @@ export function checkBackend(root: string, app: BackendApp): Finding[] {
     findings.push({
       level: "warn",
       role: "backend",
-      message: `The backend doesn't read the PORT env var. Render tells your app which port to use via $PORT.`,
+      message: `The backend doesn't read the PORT env var. The hosting provider tells your app which port to use via $PORT.`,
       fix: portHint.fix,
     });
   }
@@ -206,5 +206,12 @@ function usesClientRouter(root: string, app: FrontendApp): boolean {
 
 function hasSpaRewrite(root: string, app: FrontendApp): boolean {
   const cfg = readJson(path.join(root, app.path, "vercel.json"));
-  return Boolean(cfg && (Array.isArray(cfg.rewrites) || Array.isArray(cfg.routes)));
+  if (cfg && (Array.isArray(cfg.rewrites) || Array.isArray(cfg.routes))) return true;
+  // netlify.toml: [[redirects]] from = "/*" to = "/index.html" status = 200
+  try {
+    const toml = fs.readFileSync(path.join(root, app.path, "netlify.toml"), "utf8");
+    return /\[\[\s*redirects?\s*\]\][\s\S]*?status\s*=\s*200/.test(toml);
+  } catch {
+    return false;
+  }
 }

@@ -16,10 +16,104 @@ function setup(opts: { files?: Record<string, string | object>; cloud?: FakeClou
   const cloud = new FakeCloud({ branchHeads: { main: repo.sha }, ...opts.cloud });
   const ui = new ScriptedUI(opts.interactive ?? false, opts.answers);
   const ctx = testContext({ cwd: repo.root, ui, fetch: cloud.fetch, env: { ...TOKENS, ...SECRETS, ...opts.env } });
-  // Pick the Render workspace once, as `shipone connect render` would.
-  ctx.store.updateConfig((c) => (c.render = { ownerId: "own_1", ownerName: "Me" }));
+  // Pick workspaces once, as `shipone connect ...` would.
+  ctx.store.updateConfig((c) => {
+    c.render ??= { ownerId: "own_1", ownerName: "Me" };
+    if (ctx.env.RAILWAY_TOKEN && c.railway === undefined) c.railway = { workspaceId: "ws_1", workspaceName: "My Team" };
+    if (ctx.env.NETLIFY_AUTH_TOKEN && c.netlify === undefined) c.netlify = { accountId: "acc_1", accountName: "Me" };
+  });
   return { ...repo, cloud, ui, ctx };
 }
+
+describe("shipone deploy: provider choice", () => {
+  it("deploys the full stack through Netlify + Railway when .shipone.yml says so", async () => {
+    const { root, sha, cloud, ctx, ui } = setup({
+      env: { NETLIFY_AUTH_TOKEN: "netlify-token", RAILWAY_TOKEN: "railway-token", VERCEL_TOKEN: "", RENDER_API_KEY: "" },
+    });
+    writeFiles(root, { ".shipone.yml": "frontend:\n  path: client\n  provider: netlify\nbackend:\n  path: server\n  provider: railway\n" });
+    const result = await deploy(ctx);
+
+    expect([...cloud.netlify.sites.values()]).toHaveLength(1);
+    const [site] = [...cloud.netlify.sites.values()];
+    expect(site!.name).toBe("app");
+    expect(cloud.requestsTo("netlify", "POST", /\/builds$/)).toHaveLength(1);
+    expect(site!.env.get("VITE_API_URL")).toMatch(/^https:\/\/app-api-\d+\.up\.railway\.app$/);
+
+    const [service] = [...cloud.railway.services.values()];
+    expect(service!.name).toBe("app-api");
+    expect(service!.repo).toBe("me/app");
+    expect(service!.autoDeploy).toBe(false);
+    expect(service!.env.get("CORS_ORIGIN")).toBe("https://app.netlify.app");
+    expect(service!.env.get("FRONTEND_URL")).toBe("https://app.netlify.app");
+    expect(cloud.railway.deploys.map((d) => d.commitSha)).toEqual([sha]);
+
+    expect(result).toMatchObject({
+      frontend: { url: "https://app.netlify.app", status: { state: "ready" } },
+      backend: { url: expect.stringMatching(/^https:\/\/app-api-\d+\.up\.railway\.app$/), status: { state: "ready" } },
+    });
+    expect(readRepoConfig(root)).toMatchObject({
+      frontend: { provider: "netlify" },
+      backend: { provider: "railway" },
+    });
+    expect(ctx.store.getRepoState("me/app").backend?.url).toMatch(/up\.railway\.app$/);
+    expect(ui.text_("note")).toContain("Netlify");
+  });
+
+  it("asks which provider to use when several are connected and none is configured", async () => {
+    const { cloud, ctx, ui } = setup({
+      interactive: true,
+      answers: [
+        { match: /Where should the frontend be deployed\?/, answer: (choices) => choices![1]!.value },
+        { match: /Where should the backend be deployed\?/, answer: (choices) => choices![1]!.value },
+        { match: /Create these services/, answer: true },
+      ],
+      env: { NETLIFY_AUTH_TOKEN: "netlify-token", RAILWAY_TOKEN: "railway-token" },
+    });
+    await deploy(ctx);
+    expect([...cloud.netlify.sites.values()]).toHaveLength(1);
+    expect([...cloud.railway.services.values()]).toHaveLength(1);
+    expect(cloud.vercel.projects.size).toBe(0);
+    expect(cloud.render.services.size).toBe(0);
+    expect(ui.asked.filter((m) => /Where should the (frontend|backend) be deployed\?/.test(m))).toHaveLength(2);
+  });
+
+  it("asks even when an old connect-time default is set and others are connected (the preselect case)", async () => {
+    const { cloud, ctx, ui } = setup({
+      interactive: true,
+      answers: [
+        { match: /Where should the frontend be deployed\?/, answer: (choices) => choices![1]!.value },
+        { match: /Where should the backend be deployed\?/, answer: (choices) => choices![1]!.value },
+        { match: /Create these services/, answer: true },
+      ],
+      env: { NETLIFY_AUTH_TOKEN: "netlify-token", RAILWAY_TOKEN: "railway-token" },
+    });
+    // What `shipone connect` used to pin: defaults.frontend = vercel, defaults.backend = render.
+    ctx.store.updateConfig((c) => {
+      c.defaults = { frontend: "vercel", backend: "render" };
+    });
+    await deploy(ctx);
+    // The default only preselected the question; the answer overrode it.
+    expect(ui.asked.filter((m) => /Where should the (frontend|backend) be deployed\?/.test(m))).toHaveLength(2);
+    expect(cloud.netlify.sites.size).toBe(1);
+    expect(cloud.railway.services.size).toBe(1);
+    expect(cloud.vercel.projects.size).toBe(0);
+    expect(cloud.render.services.size).toBe(0);
+  });
+
+  it("picks the only connected provider without asking", async () => {
+    const { cloud, ctx, ui } = setup({
+      interactive: true,
+      answers: [{ match: /Create these services/, answer: true }],
+      env: { VERCEL_TOKEN: "", RENDER_API_KEY: "", NETLIFY_AUTH_TOKEN: "netlify-token", RAILWAY_TOKEN: "railway-token" },
+    });
+    await deploy(ctx);
+    expect(ui.text_("info")).toContain("only frontend provider connected");
+    expect(ui.text_("info")).toContain("only backend provider connected");
+    expect(ui.asked.filter((m) => /Where should the/.test(m))).toHaveLength(0);
+    expect(cloud.netlify.sites.size).toBe(1);
+    expect(cloud.railway.services.size).toBe(1);
+  });
+});
 
 describe("shipone deploy: first run", () => {
   it("creates both services, wires URLs both ways, and deploys the exact commit", async () => {

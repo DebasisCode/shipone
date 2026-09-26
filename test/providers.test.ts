@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "../src/providers/http.js";
+import { NetlifyHost } from "../src/providers/netlify.js";
+import { RailwayHost } from "../src/providers/railway.js";
 import { RenderHost, repoFromUrl } from "../src/providers/render.js";
 import { VercelHost } from "../src/providers/vercel.js";
 import { FakeCloud } from "./fakeCloud.js";
@@ -175,5 +177,125 @@ describe("RenderHost against the fake API", () => {
   it("normalises repo URLs", () => {
     expect(repoFromUrl("https://github.com/Me/App.git")).toBe("me/app");
     expect(repoFromUrl(undefined)).toBeUndefined();
+  });
+});
+
+describe("NetlifyHost against the fake API", () => {
+  const setup = (opts = {}) => {
+    const cloud = new FakeCloud(opts);
+    return { cloud, host: new NetlifyHost("netlify-token", { fetch: cloud.fetch, retryDelayMs: 0 }) };
+  };
+  const commit = { owner: "me", repo: "app", branch: "main", sha: "abc1234def" };
+
+  it("creates a GitHub-linked site and reports its production URL", async () => {
+    const { cloud, host } = setup();
+    const p = await host.createProject({ name: "app", repo: { owner: "me", repo: "app" }, rootDirectory: "client", framework: "vite" });
+    expect(p.repo).toBe("me/app");
+    const req = cloud.requestsTo("netlify", "POST", /^\/api\/v1\/sites$/)[0]!;
+    expect(req.body).toMatchObject({ name: "app", build_settings: { provider: "github", repo_path: "me/app" } });
+    expect((req.body as any).build_settings.cmd).toBe("cd client && npm run build");
+    expect(await host.productionUrl(p.id)).toBe("https://app.netlify.app");
+    // Netlify's deploy-on-push can't be disabled without breaking API builds.
+    expect(await host.disableGitDeployments(p.id)).toBe(false);
+    expect(await host.findProject("missing")).toBeUndefined();
+  });
+
+  it("upserts env vars via the account endpoint with site scope", async () => {
+    const { cloud, host } = setup();
+    const p = await host.createProject({ name: "app", repo: { owner: "me", repo: "app" }, rootDirectory: ".", framework: "vite" });
+    await host.setEnv(p.id, [{ key: "VITE_API_URL", value: "https://a" }]);
+    expect(cloud.requestsTo("netlify", "POST", /\/env$/)[0]!.body).toMatchObject([
+      { key: "VITE_API_URL", values: [{ context: "all", value: "https://a" }] },
+    ]);
+    await host.setEnv(p.id, [{ key: "VITE_API_URL", value: "https://b" }]);
+    expect(cloud.requestsTo("netlify", "PATCH", /\/env\/VITE_API_URL$/)).toHaveLength(1);
+    expect(await host.listEnvKeys(p.id)).toEqual(new Set(["VITE_API_URL"]));
+  });
+
+  it("builds the branch tip and waits for the deploy", async () => {
+    const { cloud, host } = setup({ branchHeads: { main: commit.sha } });
+    const p = await host.createProject({ name: "app", repo: { owner: "me", repo: "app" }, rootDirectory: ".", framework: "vite" });
+    const d = await host.deploy(p, commit);
+    expect(d).toMatchObject({ state: "queued", sha: commit.sha });
+    expect(cloud.requestsTo("netlify", "POST", /\/builds$/)[0]!.query.get("branch")).toBe("main");
+    await host.getDeploy(p.id, d.id); // builds advance one step per poll
+    expect(await host.getDeploy(p.id, d.id)).toMatchObject({ state: "ready", url: "https://app.netlify.app", sha: commit.sha });
+    expect((await host.latestDeploy(p.id))?.id).toBe(d.id);
+    expect(await host.logs(d.id, 10)).toContain("Starting build");
+  });
+
+  it("gives an actionable hint when Netlify can't see the repo", async () => {
+    const { host } = setup({ accessibleRepos: [] });
+    const err = await host.createProject({ name: "app", repo: { owner: "me", repo: "app" }, rootDirectory: ".", framework: "vite" }).catch((e) => e);
+    expect(err.hint).toContain("github.com/apps/netlify");
+  });
+});
+
+describe("RailwayHost against the fake API", () => {
+  const setup = (opts = {}) => {
+    const cloud = new FakeCloud(opts);
+    return { cloud, host: new RailwayHost("railway-token", { fetch: cloud.fetch }) };
+  };
+  const commit = { owner: "me", repo: "app", branch: "main", sha: "abc1234def" };
+  const input = {
+    name: "app-api",
+    repo: { owner: "me", repo: "app" },
+    branch: "main",
+    rootDir: "server",
+    runtime: "node" as const,
+    buildCommand: "npm ci",
+    startCommand: "npm start",
+    env: [{ key: "CORS_ORIGIN", value: "https://app.vercel.app" }],
+  };
+
+  it("creates a project + service with auto-deploy off and a domain", async () => {
+    const { cloud, host } = setup();
+    const s = await host.createService(input);
+    expect(s).toMatchObject({ name: "app-api", repo: "me/app", url: expect.stringMatching(/\.up\.railway\.app$/) });
+    const svc = [...cloud.railway.services.values()][0]!;
+    expect(svc).toMatchObject({ repo: "me/app", branch: "main", rootDirectory: "server", buildCommand: "npm ci", startCommand: "npm start" });
+    expect(svc.autoDeploy).toBe(false);
+    expect(svc.env.get("CORS_ORIGIN")).toBe("https://app.vercel.app");
+    expect(svc.env.get("PORT")).toBe("8080");
+    expect((await host.findService("app-api"))?.id).toBe(s.id);
+    expect(await host.findService("missing")).toBeUndefined();
+  });
+
+  it("upserts env vars and lists keys", async () => {
+    const { cloud, host } = setup();
+    const s = await host.createService(input);
+    await host.setEnv(s.id, [{ key: "DATABASE_URL", value: "postgres://x" }]);
+    const svc = [...cloud.railway.services.values()][0]!;
+    expect(svc.env.get("DATABASE_URL")).toBe("postgres://x");
+    expect(svc.env.get("CORS_ORIGIN")).toBe("https://app.vercel.app");
+    expect(await host.listEnvKeys(s.id)).toContain("DATABASE_URL");
+  });
+
+  it("deploys an exact commit and reads status + logs", async () => {
+    const { host } = setup();
+    const s = await host.createService(input);
+    const d = await host.deploy(s.id, commit);
+    expect(d).toMatchObject({ state: "queued", sha: commit.sha });
+    await host.getDeploy(s.id, d.id); // builds advance one step per poll
+    expect(await host.getDeploy(s.id, d.id)).toMatchObject({ state: "ready", rawState: "SUCCESS", sha: commit.sha });
+    expect((await host.latestDeploy(s.id))?.id).toBe(d.id);
+    expect(await host.logs(s.id, 50)).toContain("Building with Nixpacks");
+  });
+
+  it("switches the branch and syncs drifted commands on an existing service", async () => {
+    const { cloud, host } = setup();
+    const s = await host.createService(input);
+    await host.configure(s.id, { branch: "feature", disableAutoDeploy: true, buildCommand: "npm install", startCommand: "node server.js" });
+    const svc = [...cloud.railway.services.values()][0]!;
+    expect(svc.branch).toBe("feature");
+    expect(svc.buildCommand).toBe("npm install");
+    expect(svc.startCommand).toBe("node server.js");
+    expect(svc.autoDeploy).toBe(false);
+  });
+
+  it("gives an actionable hint when Railway can't see the repo", async () => {
+    const { host } = setup({ accessibleRepos: [] });
+    const err = await host.createService(input).catch((e) => e);
+    expect(err.hint).toContain("github.com/apps/railway");
   });
 });

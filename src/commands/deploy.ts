@@ -59,7 +59,7 @@ export interface DeployResult {
 
 const short = (sha: string) => sha.slice(0, 7);
 
-/** Vercel/Render-safe name: lowercase letters, digits and single dashes. */
+/** Provider-safe name: lowercase letters, digits and single dashes. */
 export function serviceName(s: string): string {
   return (
     s
@@ -96,13 +96,13 @@ async function resolveCommit(ctx: Context, git: GitInfo): Promise<CommitRef> {
         }
       } else {
         throw new ShipOneError(
-          `Branch "${git.branch}" isn't on GitHub yet, so Vercel/Render can't build it.`,
+          `Branch "${git.branch}" isn't on GitHub yet, so the hosting provider can't build it.`,
           `Push it first: git push -u origin ${git.branch}`,
         );
       }
     } else {
       throw new ShipOneError(
-        `Branch "${git.branch}" isn't on GitHub yet, so Vercel/Render can't build it.`,
+        `Branch "${git.branch}" isn't on GitHub yet, so the hosting provider can't build it.`,
         `Push it first: git push -u origin ${git.branch}`,
       );
     }
@@ -168,22 +168,66 @@ async function chooseApp<T extends { path: string }>(ctx: Context, role: "fronte
     .then((p) => apps.find((a) => a.path === p));
 }
 
-async function chooseProvider<R extends "frontend" | "backend">(
+/** Which provider hosts `role`: explicit config wins; otherwise the account
+ *  default preselects, one connected provider is used directly, and several
+ *  connected providers are asked about (the answer sticks via .shipone.yml). */
+async function chooseProviderGeneric<R extends "frontend" | "backend">(
   ctx: Context,
   role: R,
   repoConfig: RepoConfig,
   slug: string,
-): Promise<R extends "frontend" ? FrontendProviderName : BackendProviderName> {
+): Promise<FrontendProviderName | BackendProviderName> {
   const account = ctx.store.readConfig();
   const resolved = resolveProvider(role, repoConfig, account.repos[slug], account);
-  if (resolved) return resolved.provider;
-  const options = role === "frontend" ? FRONTEND_PROVIDERS : BACKEND_PROVIDERS;
-  const picked = await ctx.ui.select({
+  // .shipone.yml and per-repo overrides are explicit choices: use them as-is.
+  if (resolved && resolved.source !== "account-default") return resolved.provider;
+  // The account default only preselects the question below (older versions
+  // pinned it on connect, but it mustn't silence the question forever).
+  const defaultProvider = resolved?.provider;
+  const options = role === "frontend" ? ([...FRONTEND_PROVIDERS] as (FrontendProviderName | BackendProviderName)[]) : [...BACKEND_PROVIDERS];
+  const connected = options.filter((p) => ctx.store.getToken(p));
+
+  if (connected.length === 1 && (!defaultProvider || defaultProvider === connected[0])) {
+    const only = connected[0]!;
+    if (ctx.ui.interactive) {
+      ctx.ui.info(`Using ${PROVIDER_LABELS[only]} for the ${role} — it's the only ${role} provider connected.`);
+    }
+    return only;
+  }
+  // Several (or no) providers connected: ask, preselecting the account default
+  // when it's a valid choice. Non-interactive mode takes the preselect as-is.
+  const offered = defaultProvider && !connected.includes(defaultProvider) ? options : connected.length ? connected : options;
+  const initial = defaultProvider && offered.includes(defaultProvider) ? defaultProvider : offered[0]!;
+  return await ctx.ui.select({
     message: `Where should the ${role} be deployed?`,
-    choices: options.map((p) => ({ value: p, label: PROVIDER_LABELS[p] })),
-    initial: options[0],
+    choices: offered.map((p) => ({
+      value: p,
+      label: PROVIDER_LABELS[p],
+      hint: ctx.store.getToken(p) ? "connected" : "not connected yet",
+    })),
+    initial,
   });
-  return picked as R extends "frontend" ? FrontendProviderName : BackendProviderName;
+}
+
+async function chooseProvider(
+  ctx: Context,
+  role: "frontend",
+  repoConfig: RepoConfig,
+  slug: string,
+): Promise<FrontendProviderName>;
+async function chooseProvider(
+  ctx: Context,
+  role: "backend",
+  repoConfig: RepoConfig,
+  slug: string,
+): Promise<BackendProviderName>;
+async function chooseProvider(
+  ctx: Context,
+  role: "frontend" | "backend",
+  repoConfig: RepoConfig,
+  slug: string,
+): Promise<FrontendProviderName | BackendProviderName> {
+  return chooseProviderGeneric(ctx, role, repoConfig, slug);
 }
 
 export async function buildPlan(ctx: Context, git: GitInfo, commit: CommitRef): Promise<DeployPlan> {
@@ -523,7 +567,9 @@ export async function deploy(ctx: Context, opts: DeployOptions = {}): Promise<De
     if (!gitDeploysOff) {
       ui.warn(
         `Couldn't turn off ${feHost.label}'s deploy-on-push, so pushes may deploy automatically.\n` +
-          `To stop that, add {"git": {"deploymentEnabled": false}} to ${plan.frontend.app.path}/vercel.json.`,
+          (feHost.name === "vercel"
+            ? `To stop that, add {"git": {"deploymentEnabled": false}} to ${plan.frontend.app.path}/vercel.json.`
+            : `To stop that, turn off deploy-on-push in the ${feHost.label} dashboard (${feHost.dashboardUrl(project)}).`),
       );
     }
     const url = (await feHost.productionUrl(project.id)) ?? saved.frontend?.url;

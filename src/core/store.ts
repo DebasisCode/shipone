@@ -25,7 +25,9 @@ export interface AccountConfig {
   /** Keyed by "owner/repo". */
   repos: Record<string, RepoOverride>;
   vercel?: { teamId?: string; teamSlug?: string };
+  netlify?: { accountId?: string; accountName?: string };
   render?: { ownerId?: string; ownerName?: string; region?: string; plan?: string };
+  railway?: { workspaceId?: string; workspaceName?: string };
 }
 
 export type Credentials = Partial<Record<ProviderName, string>>;
@@ -55,7 +57,9 @@ export type StateFile = Record<string, RepoState>;
 /** Env vars that take precedence over stored credentials (handy for CI). */
 export const TOKEN_ENV_VARS: Record<ProviderName, string> = {
   vercel: "VERCEL_TOKEN",
+  netlify: "NETLIFY_AUTH_TOKEN",
   render: "RENDER_API_KEY",
+  railway: "RAILWAY_TOKEN",
 };
 
 export class Store {

@@ -2,14 +2,16 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 /**
- * In-memory stand-in for the parts of the Vercel and Render REST APIs that
- * ShipOne uses. Request/response shapes follow the official OpenAPI specs
- * (@vercel/sdk models, Render public API schema). Builds progress one step
+ * In-memory stand-in for the parts of the Vercel, Netlify, Render and Railway
+ * APIs that ShipOne uses. Request/response shapes follow the official OpenAPI
+ * specs (Vercel/Netlify/Render REST, Railway GraphQL). Builds progress one step
  * per status poll so tests exercise the waiting logic.
  */
 
+export type FakeApi = "vercel" | "netlify" | "render" | "railway";
+
 export interface RecordedRequest {
-  api: "vercel" | "render";
+  api: FakeApi;
   method: string;
   path: string;
   query: URLSearchParams;
@@ -39,6 +41,24 @@ interface VDeployment {
   polls: number;
 }
 
+interface NSite {
+  id: string;
+  name: string;
+  account_id: string;
+  build_settings: { repo_path?: string; cmd?: string; stop_builds?: boolean };
+  env: Map<string, string>;
+}
+
+interface NDeploy {
+  id: string;
+  siteId: string;
+  state: string;
+  commit_ref: string;
+  error_message?: string;
+  created_at: string;
+  polls: number;
+}
+
 interface RService {
   id: string;
   name: string;
@@ -61,12 +81,44 @@ interface RDeploy {
   polls: number;
 }
 
+interface RwProject {
+  id: string;
+  name: string;
+  environmentId: string;
+  services: Map<string, RwService>;
+}
+
+interface RwService {
+  id: string;
+  name: string;
+  repo?: string;
+  branch?: string;
+  rootDirectory?: string;
+  buildCommand?: string;
+  startCommand?: string;
+  dockerfilePath?: string;
+  autoDeploy: boolean;
+  domain?: string;
+  env: Map<string, string>;
+}
+
+interface RwDeployment {
+  id: string;
+  serviceId: string;
+  status: string;
+  commitSha: string;
+  createdAt: string;
+  polls: number;
+}
+
 export interface FakeCloudOptions {
   vercelToken?: string;
+  netlifyToken?: string;
   renderToken?: string;
+  railwayToken?: string;
   /** Repos ("owner/repo") the providers' GitHub apps can see. */
   accessibleRepos?: string[];
-  /** Branch tip on GitHub, used for Render's automatic first deploy. */
+  /** Branch tips on GitHub, used for automatic first deploys. */
   branchHeads?: Record<string, string>;
   /** Vercel assigns the production domain only after the first deploy. */
   vercelDomainAfterDeploy?: boolean;
@@ -74,6 +126,8 @@ export interface FakeCloudOptions {
   vercelRejectsGitOptions?: boolean;
   failVercelBuild?: boolean;
   failRenderBuild?: boolean;
+  failNetlifyBuild?: boolean;
+  failRailwayBuild?: boolean;
   /** How many polls a build takes before finishing. */
   buildPolls?: number;
 }
@@ -84,7 +138,9 @@ type Reply = { status: number; body?: Json; headers?: Record<string, string> };
 export class FakeCloud {
   readonly requests: RecordedRequest[] = [];
   readonly vercel = { projects: new Map<string, VProject>(), deployments: new Map<string, VDeployment>() };
+  readonly netlify = { sites: new Map<string, NSite>(), deploys: new Map<string, NDeploy>() };
   readonly render = { services: new Map<string, RService>(), deploys: [] as RDeploy[] };
+  readonly railway = { projects: new Map<string, RwProject>(), services: new Map<string, RwService>(), deploys: [] as RwDeployment[] };
   private seq = 0;
 
   constructor(readonly opts: FakeCloudOptions = {}) {}
@@ -93,10 +149,10 @@ export class FakeCloud {
     return `${prefix}${++this.seq}`;
   }
 
-  /** A FetchLike that routes to this fake. URLs: https://api.vercel.com/... and https://api.render.com/v1/... */
+  /** A FetchLike that routes to this fake by hostname. */
   fetch = async (input: string, init?: RequestInit): Promise<Response> => {
     const url = new URL(input);
-    const api = url.hostname.includes("vercel") ? "vercel" : "render";
+    const api = apiForHost(url.hostname);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     const auth = new Headers(init?.headers).get("authorization");
     const reply = this.handle(api, init?.method ?? "GET", url.pathname, url.searchParams, body, auth);
@@ -106,16 +162,23 @@ export class FakeCloud {
     });
   };
 
-  /** Serve both APIs over real HTTP (for end-to-end CLI tests). */
-  async listen(): Promise<{ vercelUrl: string; renderUrl: string; close: () => Promise<void> }> {
+  /** Serve all APIs over real HTTP (for end-to-end CLI tests). */
+  async listen(): Promise<{ vercelUrl: string; netlifyUrl: string; renderUrl: string; railwayUrl: string; close: () => Promise<void> }> {
     const server = http.createServer((req, res) => {
       let data = "";
       req.on("data", (c) => (data += c));
       req.on("end", () => {
         const url = new URL(req.url ?? "/", "http://localhost");
-        const api = url.pathname.startsWith("/vercel") ? "vercel" : "render";
-        const path = url.pathname.replace(/^\/(vercel|render)/, "");
-        const reply = this.handle(api, req.method ?? "GET", path, url.searchParams, data ? JSON.parse(data) : undefined, req.headers.authorization ?? null);
+        const seg = url.pathname.split("/")[1] as FakeApi;
+        const path = url.pathname.replace(/^\/(vercel|netlify|render|railway)/, "");
+        const reply = this.handle(
+          apiForHost(seg),
+          req.method ?? "GET",
+          path,
+          url.searchParams,
+          data ? JSON.parse(data) : undefined,
+          req.headers.authorization ?? null,
+        );
         res.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
         res.end(reply.body === undefined ? undefined : JSON.stringify(reply.body));
       });
@@ -124,24 +187,38 @@ export class FakeCloud {
     const { port } = server.address() as AddressInfo;
     return {
       vercelUrl: `http://127.0.0.1:${port}/vercel`,
+      netlifyUrl: `http://127.0.0.1:${port}/netlify/api/v1`,
       renderUrl: `http://127.0.0.1:${port}/render/v1`,
+      railwayUrl: `http://127.0.0.1:${port}/railway/graphql/v2`,
       close: () => new Promise((r) => server.close(() => r())),
     };
   }
 
-  requestsTo(api: "vercel" | "render", method?: string, pathRe?: RegExp) {
+  requestsTo(api: FakeApi, method?: string, pathRe?: RegExp) {
     return this.requests.filter((r) => r.api === api && (!method || r.method === method) && (!pathRe || pathRe.test(r.path)));
   }
 
-  private handle(api: "vercel" | "render", method: string, path: string, query: URLSearchParams, body: Json, auth: string | null): Reply {
+  private handle(api: FakeApi, method: string, path: string, query: URLSearchParams, body: Json, auth: string | null): Reply {
     this.requests.push({ api, method, path, query, body });
-    const token = api === "vercel" ? (this.opts.vercelToken ?? "vercel-token") : (this.opts.renderToken ?? "render-token");
+    const token = this.opts[`${api}Token` as keyof FakeCloudOptions] ?? `${api}-token`;
     if (auth !== `Bearer ${token}`) {
-      return api === "vercel"
-        ? { status: 403, body: { error: { code: "forbidden", message: "Not authorized", invalidToken: true } } }
-        : { status: 401, body: { id: "unauthorized", message: "unauthorized" } };
+      switch (api) {
+        case "vercel":
+          return { status: 403, body: { error: { code: "forbidden", message: "Not authorized", invalidToken: true } } };
+        default:
+          return { status: 401, body: { code: 401, message: "unauthorized" } };
+      }
     }
-    return api === "vercel" ? this.vercelRoute(method, path, query, body) : this.renderRoute(method, path.replace(/^\/v1/, ""), query, body);
+    switch (api) {
+      case "vercel":
+        return this.vercelRoute(method, path, query, body);
+      case "netlify":
+        return this.netlifyRoute(method, path.replace(/^\/api\/v1/, ""), query, body);
+      case "render":
+        return this.renderRoute(method, path.replace(/^\/v1/, ""), query, body);
+      case "railway":
+        return this.railwayRoute(method, path, body);
+    }
   }
 
   private canAccess(repo: string) {
@@ -286,6 +363,153 @@ export class FakeCloud {
     }
   }
 
+  // ------------------------------------------------------------------ Netlify
+
+  private findSite(idOrName: string) {
+    return this.netlify.sites.get(idOrName) ?? [...this.netlify.sites.values()].find((s) => s.name === idOrName);
+  }
+
+  private netlifyRoute(method: string, path: string, query: URLSearchParams, body: any): Reply {
+    const notFound = (): Reply => ({ status: 404, body: { code: 404, message: "Not found" } });
+    let m: RegExpMatchArray | null;
+
+    if (method === "GET" && path === "/user") return { status: 200, body: { id: "u1", email: "me@example.com", full_name: "Me" } };
+    if (method === "GET" && path === "/accounts") return { status: 200, body: [{ id: "acc_1", name: "Me", slug: "me" }] };
+
+    if (method === "POST" && path === "/sites") {
+      const repo: string = body?.build_settings?.repo_path ?? "";
+      if (!this.canAccess(repo)) {
+        return { status: 400, body: { code: 400, message: `Could not access the repository ${repo}. Make sure Netlify has access to it.` } };
+      }
+      if (this.findSite(body.name)) return { status: 422, body: { code: 422, message: "A site with this name already exists" } };
+      const s: NSite = {
+        id: this.nextId("site_"),
+        name: body.name,
+        account_id: body.account_id ?? "acc_1",
+        build_settings: body.build_settings ?? {},
+        env: new Map(),
+      };
+      this.netlify.sites.set(s.id, s);
+      return { status: 201, body: this.siteJson(s) };
+    }
+
+    if ((m = path.match(/^\/sites\/([^/]+)$/))) {
+      const s = this.findSite(decodeURIComponent(m[1]!));
+      if (!s) return notFound();
+      if (method === "GET") return { status: 200, body: this.siteJson(s) };
+      if (method === "PATCH") {
+        Object.assign(s.build_settings, body?.build_settings ?? {});
+        return { status: 200, body: this.siteJson(s) };
+      }
+    }
+
+    if ((m = path.match(/^\/sites\/([^/]+)\/env$/)) && method === "GET") {
+      const s = this.findSite(decodeURIComponent(m[1]!));
+      if (!s) return notFound();
+      return { status: 200, body: [...s.env].map(([key]) => ({ key, scopes: ["builds"], values: [{ context: "all", value: "" }], updated_at: "now" })) };
+    }
+
+    if ((m = path.match(/^\/accounts\/([^/]+)\/env$/)) && method === "POST") {
+      const siteId = query.get("site_id");
+      const s = siteId ? this.findSite(siteId) : undefined;
+      if (!s) return notFound();
+      const items: any[] = Array.isArray(body) ? body : [body];
+      for (const item of items) {
+        const value = item.values?.[0]?.value ?? "";
+        s.env.set(item.key, value);
+      }
+      return { status: 201, body: items.map((item) => ({ key: item.key })) };
+    }
+
+    if ((m = path.match(/^\/accounts\/([^/]+)\/env\/([^/]+)$/)) && method === "PATCH") {
+      const siteId = query.get("site_id");
+      const s = siteId ? this.findSite(siteId) : undefined;
+      if (!s || !s.env.has(decodeURIComponent(m[2]!))) {
+        return { status: 404, body: { code: 404, message: "Env var not found" } };
+      }
+      s.env.set(decodeURIComponent(m[2]!), body.value);
+      return { status: 200, body: { key: m[2], ...body } };
+    }
+
+    if ((m = path.match(/^\/sites\/([^/]+)\/builds$/)) && method === "POST") {
+      const s = this.findSite(decodeURIComponent(m[1]!));
+      if (!s) return notFound();
+      if (s.build_settings.stop_builds) {
+        return { status: 403, body: { code: 403, message: "Builds are stopped for this site and cannot be triggered" } };
+      }
+      const branch = query.get("branch") ?? "main";
+      const sha = this.opts.branchHeads?.[branch] ?? "tip-of-branch";
+      const d: NDeploy = {
+        id: this.nextId("ndep_"),
+        siteId: s.id,
+        state: "new",
+        commit_ref: sha,
+        created_at: new Date().toISOString(),
+        polls: 0,
+      };
+      this.netlify.deploys.set(d.id, d);
+      return { status: 200, body: { id: this.nextId("build_"), deploy_id: d.id, sha, done: false, created_at: d.created_at } };
+    }
+
+    if ((m = path.match(/^\/sites\/([^/]+)\/deploys$/)) && method === "GET") {
+      const s = this.findSite(decodeURIComponent(m[1]!));
+      if (!s) return notFound();
+      const list = [...this.netlify.deploys.values()].filter((d) => d.siteId === s.id).reverse();
+      return { status: 200, body: list.map((d) => this.deployJson(d)) };
+    }
+
+    if ((m = path.match(/^\/(sites\/[^/]+\/)?deploys\/([^/]+)$/)) && method === "GET") {
+      const d = this.netlify.deploys.get(m[2]!);
+      if (!d) return notFound();
+      this.advanceNetlify(d);
+      return { status: 200, body: this.deployJson(d) };
+    }
+
+    if ((m = path.match(/^\/deploys\/([^/]+)\/log$/)) && method === "GET") {
+      const d = this.netlify.deploys.get(m[1]!);
+      if (!d) return notFound();
+      const lines = ["Starting build", "Running npm run build"];
+      if (d.state === "error") lines.push("Error: Build failed with status 1");
+      return { status: 200, body: { lines: lines.map((message) => ({ message, severity: "info" })) } };
+    }
+
+    return { status: 404, body: { code: 404, message: `No fake for ${method} ${path}` } };
+  }
+
+  private advanceNetlify(d: NDeploy) {
+    if (["ready", "error", "rejected"].includes(d.state)) return;
+    d.polls++;
+    if (d.polls < (this.opts.buildPolls ?? 2)) d.state = "building";
+    else d.state = this.opts.failNetlifyBuild ? "error" : "ready";
+  }
+
+  private siteJson(s: NSite) {
+    const settings = { ...s.build_settings };
+    return {
+      id: s.id,
+      name: s.name,
+      url: `http://${s.name}.netlify.app`,
+      ssl_url: `https://${s.name}.netlify.app`,
+      admin_url: `https://app.netlify.com/sites/${s.name}`,
+      account_id: s.account_id,
+      build_settings: settings,
+    };
+  }
+
+  private deployJson(d: NDeploy) {
+    const s = this.netlify.sites.get(d.siteId);
+    return {
+      id: d.id,
+      site_id: d.siteId,
+      state: d.state,
+      commit_ref: d.commit_ref,
+      error_message: d.error_message ?? (d.state === "error" ? "Build failed" : null),
+      created_at: d.created_at,
+      ssl_url: `https://${s?.name}.netlify.app`,
+      deploy_ssl_url: `https://${d.id}.${s?.name}.netlify.app`,
+    };
+  }
+
   // ------------------------------------------------------------------ Render
 
   private renderRoute(method: string, path: string, query: URLSearchParams, body: any): Reply {
@@ -419,4 +643,222 @@ export class FakeCloud {
     const { polls: _p, serviceId: _s, ...rest } = d;
     return rest;
   }
+
+  // ------------------------------------------------------------------ Railway
+
+  /** A tiny GraphQL executor: matches the operation name in the query text. */
+  private railwayRoute(method: string, path: string, body: any): Reply {
+    if (method !== "POST" || !/^\/graphql\/v2/.test(path)) {
+      return { status: 404, body: { errors: [{ message: `No fake for ${method} ${path}` }] } };
+    }
+    const query: string = body?.query ?? "";
+    const vars = (body?.variables ?? {}) as Record<string, any>;
+    const q = (name: string, re: RegExp) => re.test(query);
+
+    const gql = (data: Json) => ({ status: 200, body: { data } });
+    const gqlError = (message: string, code = "INTERNAL_SERVER_ERROR") => ({ status: 200, body: { errors: [{ message, extensions: { code } }] } });
+
+    if (q("me", /query\s*\{?\s*(\(|\{)?\s*me/)) {
+      return gql({ me: { id: "u1", name: "Me", email: "me@example.com", workspaces: [{ id: "ws_1", name: "My Team" }] } });
+    }
+
+    if (q("projects", /projects\(/) ) {
+      // The CLI asks for personal + workspace projects in one query.
+      const edges = [...this.railway.projects.values()].map((p) => ({ node: { id: p.id, name: p.name } }));
+      return gql({ personal: { edges }, ws: { edges: vars.workspaceId ? edges : [] } });
+    }
+
+    if (q("project", /project\(id:/)) {
+      const p = this.railway.projects.get(vars.id);
+      if (!p) return gqlError("Project not found");
+      return gql({
+        project: {
+          id: p.id,
+          name: p.name,
+          environments: { edges: [{ node: { id: p.environmentId, name: "production" } }] },
+          services: { edges: [...p.services.values()].map((s) => ({ node: { id: s.id, name: s.name } })) },
+        },
+      });
+    }
+
+    if (q("service", /service\(id:/) && !/serviceInstance/.test(query)) {
+      const s = this.railway.services.get(vars.id);
+      if (!s) return gqlError("Not Authorized");
+      const p = this.findRailwayProjectOf(vars.id);
+      const svc: Record<string, Json> = { id: s.id, name: s.name, projectId: p?.id ?? "prj_unknown" };
+      if (/repoTriggers/.test(query)) svc.repoTriggers = { edges: [{ node: { branch: s.branch ?? null } }] };
+      return gql({ service: svc });
+    }
+
+    if (q("serviceInstance", /serviceInstance\(serviceId:/)) {
+      const s = this.railway.services.get(vars.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      return gql({
+        serviceInstance: {
+          id: `${vars.serviceId}-inst`,
+          serviceName: s.name,
+          startCommand: s.startCommand ?? null,
+          buildCommand: s.buildCommand ?? null,
+          rootDirectory: s.rootDirectory ?? null,
+          dockerfilePath: s.dockerfilePath ?? null,
+          source: s.repo ? { repo: s.repo } : null,
+          domains: { serviceDomains: s.domain ? [{ id: `${s.id}-dom`, domain: s.domain }] : [] },
+        },
+      });
+    }
+
+    if (q("projectCreate", /projectCreate\(/)) {
+      const id = this.nextId("prj_");
+      const p: RwProject = { id, name: vars.input?.name ?? "project", environmentId: this.nextId("env_"), services: new Map() };
+      this.railway.projects.set(id, p);
+      return gql({ projectCreate: { id, name: p.name } });
+    }
+
+    if (q("serviceCreate", /serviceCreate\(/)) {
+      const p = this.railway.projects.get(vars.input?.projectId);
+      if (!p) return gqlError("Project not found");
+      const repo: string = vars.input?.source?.repo ?? "";
+      if (!this.canAccess(repo)) {
+        return gqlError(`Could not access the repository ${repo}. Make sure Railway has access to it.`);
+      }
+      const id = this.nextId("svc_");
+      const s: RwService = {
+        id,
+        name: vars.input?.name ?? "service",
+        repo,
+        branch: vars.input?.branch ?? "main",
+        autoDeploy: true,
+        env: new Map(Object.entries(vars.input?.variables ?? {})),
+      };
+      p.services.set(id, s);
+      this.railway.services.set(id, s);
+      return gql({ serviceCreate: { id, name: s.name } });
+    }
+
+    if (q("serviceDomainCreate", /serviceDomainCreate\(/)) {
+      const s = this.railway.services.get(vars.input?.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      const domain = `${s.name}-${this.seq}.up.railway.app`;
+      s.domain = domain;
+      return gql({ serviceDomainCreate: { id: `${s.id}-dom`, domain } });
+    }
+
+    if (q("serviceInstanceAutoDeployUpdate", /serviceInstanceAutoDeployUpdate\(/)) {
+      const s = this.railway.services.get(vars.input?.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      s.autoDeploy = Boolean(vars.input?.enabled);
+      return gql({ serviceInstanceAutoDeployUpdate: { enabled: s.autoDeploy } });
+    }
+
+    if (q("serviceConnect", /serviceConnect\(/)) {
+      const s = this.railway.services.get(vars.id);
+      if (!s) return gqlError("Not Authorized");
+      if (vars.input?.branch) s.branch = vars.input.branch;
+      return gql({ serviceConnect: { id: s.id } });
+    }
+
+    if (q("serviceInstanceUpdate", /serviceInstanceUpdate\(/)) {
+      const s = this.railway.services.get(vars.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      const input = vars.input ?? {};
+      if (input.rootDirectory !== undefined && input.rootDirectory !== null) s.rootDirectory = input.rootDirectory;
+      if (input.buildCommand !== undefined && input.buildCommand !== null) s.buildCommand = input.buildCommand;
+      if (input.startCommand !== undefined && input.startCommand !== null) s.startCommand = input.startCommand;
+      if (input.dockerfilePath !== undefined && input.dockerfilePath !== null) s.dockerfilePath = input.dockerfilePath;
+      return gql({ serviceInstanceUpdate: { id: `${s.id}-inst` } });
+    }
+
+    if (q("variables", /variables\(projectId:/)) {
+      const s = this.railway.services.get(vars.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      return gql({ variables: Object.fromEntries(s.env) });
+    }
+
+    if (q("variableCollectionUpsert", /variableCollectionUpsert\(/)) {
+      const s = this.railway.services.get(vars.input?.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      for (const [k, v] of Object.entries(vars.input?.variables ?? {})) s.env.set(k, String(v));
+      return gql({ variableCollectionUpsert: true });
+    }
+
+    if (q("variableUpsert", /variableUpsert\(/)) {
+      const s = this.railway.services.get(vars.input?.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      s.env.set(vars.input?.name, vars.input?.value);
+      return gql({ variableUpsert: true });
+    }
+
+    if (q("serviceInstanceDeployV2", /serviceInstanceDeployV2\(/)) {
+      const s = this.railway.services.get(vars.serviceId);
+      if (!s) return gqlError("Not Authorized");
+      const d: RwDeployment = {
+        id: this.nextId("rwdep_"),
+        serviceId: s.id,
+        status: "QUEUED",
+        commitSha: vars.commitSha ?? "tip-of-branch",
+        createdAt: new Date().toISOString(),
+        polls: 0,
+      };
+      this.railway.deploys.push(d);
+      return gql({ serviceInstanceDeployV2: d.id });
+    }
+
+    if (q("deployments", /deployments\(input:/)) {
+      const list = this.railway.deploys.filter((d) => d.serviceId === vars.input?.serviceId).reverse();
+      return gql({ deployments: { edges: list.slice(0, vars.first ?? 20).map((node) => ({ node: this.railwayDeployJson(node) })), pageInfo: { hasNextPage: false } } });
+    }
+
+    if (q("deployment", /deployment\(id:/) && !/deployments\(/.test(query)) {
+      const d = this.railway.deploys.find((x) => x.id === vars.id);
+      if (!d) return gqlError("Not Authorized");
+      this.advanceRailway(d);
+      return gql({ deployment: this.railwayDeployJson(d) });
+    }
+
+    if (q("deploymentLogs", /deploymentLogs\(/) || q("buildLogs", /buildLogs\(/)) {
+      const d = this.railway.deploys.find((x) => x.id === vars.deploymentId);
+      if (!d) return gqlError("Not Authorized");
+      const build = ["Building with Nixpacks", "npm ci"];
+      const runtime = ["Deploying to Railway"];
+      if (d.status === "FAILED") build.push("Error: build failed");
+      const mk = (messages: string[]) => messages.map((message) => ({ message, severity: "info", timestamp: new Date().toISOString() }));
+      const data: Record<string, Json> = {};
+      if (/buildLogs\(/.test(query)) data.buildLogs = mk(build);
+      if (/deploymentLogs\(/.test(query)) data.deploymentLogs = mk(runtime);
+      return gql(data);
+    }
+
+    return { status: 200, body: { errors: [{ message: `No fake for query: ${query.slice(0, 120)}` }] } };
+  }
+
+  private findRailwayProjectOf(serviceId: string): RwProject | undefined {
+    return [...this.railway.projects.values()].find((p) => p.services.has(serviceId));
+  }
+
+  private advanceRailway(d: RwDeployment) {
+    if (["SUCCESS", "FAILED", "CRASHED"].includes(d.status)) return;
+    d.polls++;
+    if (d.polls < (this.opts.buildPolls ?? 2)) d.status = "BUILDING";
+    else d.status = this.opts.failRailwayBuild ? "FAILED" : "SUCCESS";
+  }
+
+  private railwayDeployJson(d: RwDeployment) {
+    const s = this.railway.services.get(d.serviceId);
+    return {
+      id: d.id,
+      status: d.status,
+      createdAt: d.createdAt,
+      meta: { commitSha: d.commitSha, service: s?.name },
+      staticUrl: `https://${d.status === "SUCCESS" ? "" : "build-"}logs.railway.com/${d.id}`,
+      url: `https://logs.railway.com/${d.id}`,
+    };
+  }
+}
+
+function apiForHost(host: string): FakeApi {
+  if (host.includes("vercel") || host === "vercel") return "vercel";
+  if (host.includes("netlify") || host === "netlify") return "netlify";
+  if (host.includes("render") || host === "render") return "render";
+  if (host.includes("railway") || host === "railway") return "railway";
+  throw new Error(`FakeCloud has no fake for host "${host}"`);
 }

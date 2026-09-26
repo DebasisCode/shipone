@@ -10,7 +10,9 @@ import {
   isBackendProvider,
   isFrontendProvider,
   PROVIDER_LABELS,
+  type ProviderName,
 } from "../core/types.js";
+import { netlifyHost, railwayHost, renderHost, vercelHost } from "../providers/index.js";
 
 const RENDER_REGIONS = ["oregon", "ohio", "virginia", "frankfurt", "singapore"];
 
@@ -87,10 +89,18 @@ export async function configShow(ctx: Context) {
   for (const p of ALL_PROVIDERS) {
     const fromEnv = Boolean(ctx.env[TOKEN_ENV_VARS[p]]);
     const connected = fromEnv || Boolean(creds[p]);
-    const extra =
-      p === "vercel" && cfg.vercel?.teamSlug ? ` (team ${cfg.vercel.teamSlug})` : p === "render" && cfg.render?.ownerName ? ` (${cfg.render.ownerName})` : "";
+    const team =
+      p === "vercel" && cfg.vercel?.teamSlug
+        ? ` (team ${cfg.vercel.teamSlug})`
+        : p === "netlify" && cfg.netlify?.accountName
+          ? ` (${cfg.netlify.accountName})`
+          : p === "render" && cfg.render?.ownerName
+            ? ` (${cfg.render.ownerName})`
+            : p === "railway" && cfg.railway?.workspaceName
+              ? ` (${cfg.railway.workspaceName})`
+              : "";
     lines.push(
-      `  ${PROVIDER_LABELS[p].padEnd(8)} ${connected ? pc.green("connected") : pc.dim(`not connected: shipone connect ${p}`)}${extra}${fromEnv ? pc.dim(` via ${TOKEN_ENV_VARS[p]}`) : ""}`,
+      `  ${PROVIDER_LABELS[p].padEnd(8)} ${connected ? pc.green("connected") : pc.dim(`not connected: shipone connect ${p}`)}${team}${fromEnv ? pc.dim(` via ${TOKEN_ENV_VARS[p]}`) : ""}`,
     );
   }
 
@@ -114,4 +124,75 @@ export function configKeysHelp(): string {
   return Object.entries(KEYS)
     .map(([k, v]) => `  ${k.padEnd(14)} ${v.describe}${v.repo ? " [--repo ok]" : ""}`)
     .join("\n");
+}
+
+/**
+ * Live account details for every connected provider: who the token belongs to,
+ * which team/workspace is in use, and how the token got there. Nothing here
+ * can change or deploy anything.
+ */
+export async function accountInfo(ctx: Context) {
+  const cfg = ctx.store.readConfig();
+  const lines: string[] = [];
+
+  const one = async (provider: ProviderName): Promise<string[]> => {
+    if (!ctx.store.getToken(provider)) {
+      return [`  ${PROVIDER_LABELS[provider].padEnd(8)} ${pc.dim("not connected — shipone connect " + provider)}`];
+    }
+    const out = [`  ${PROVIDER_LABELS[provider].padEnd(8)} ${pc.green("connected")}`];
+    try {
+      switch (provider) {
+        case "vercel": {
+          const host = vercelHost(ctx);
+          const [user, teams] = await Promise.all([host.whoami(), host.listTeams()]);
+          out.push(`           user  ${user.username}${user.email ? pc.dim(` <${user.email}>`) : ""}`);
+          out.push(`           team  ${cfg.vercel?.teamSlug ? cfg.vercel.teamSlug : pc.dim("(personal account)")}`);
+          if (teams.length) out.push(`           other teams: ${teams.map((t) => t.name ?? t.slug).join(", ")} ${pc.dim("(shipone connect vercel to switch)")}`);
+          break;
+        }
+        case "netlify": {
+          const host = netlifyHost(ctx);
+          const [user, accounts] = await Promise.all([host.whoami(), host.listAccounts()]);
+          out.push(`           user  ${user.full_name ?? user.email ?? user.id}`);
+          out.push(`           team  ${cfg.netlify?.accountName ?? pc.dim("(personal account)")}`);
+          if (accounts.length > 1) out.push(`           other teams: ${accounts.map((a) => a.name).filter((n) => n !== cfg.netlify?.accountName).join(", ")}`);
+          break;
+        }
+        case "render": {
+          const host = renderHost(ctx);
+          const owners = await host.listOwners();
+          const owner = owners.find((o) => o.id === cfg.render?.ownerId);
+          out.push(`           workspace  ${owner?.name ?? cfg.render?.ownerName ?? pc.dim("(none selected)")}`);
+          if (owner?.email) out.push(`             email  ${owner.email}`);
+          if (owners.length > 1) out.push(`           other workspaces: ${owners.filter((o) => o.id !== owner?.id).map((o) => o.name).join(", ")}`);
+          break;
+        }
+        case "railway": {
+          const host = railwayHost(ctx);
+          const me = await host.whoami();
+          out.push(`           user  ${me.name}`);
+          out.push(`           workspace  ${cfg.railway?.workspaceName ?? pc.dim("(personal account)")}`);
+          if (me.workspaces.length) {
+            out.push(`           other workspaces: ${me.workspaces.filter((w) => w.id !== cfg.railway?.workspaceId).map((w) => w.name).join(", ")}`);
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      out.push(`           ${pc.yellow(`couldn't reach ${PROVIDER_LABELS[provider]}: ${(err as Error).message}`)}`);
+    }
+    if (ctx.env[TOKEN_ENV_VARS[provider]]) out.push(`           token from env var ${TOKEN_ENV_VARS[provider]}`);
+    return out;
+  };
+
+  // Ask all connected providers at once; a slow one shouldn't stall the rest.
+  const blocks = await Promise.all(ALL_PROVIDERS.map((p) => one(p)));
+  lines.push(pc.bold("Accounts"), ...blocks.flat());
+
+  lines.push("", pc.bold("Deploy defaults"));
+  lines.push(`  frontend  ${cfg.defaults.frontend ?? pc.dim("(ask on deploy)")}`);
+  lines.push(`  backend   ${cfg.defaults.backend ?? pc.dim("(ask on deploy)")}`);
+
+  lines.push("", pc.dim(`Providers are added or removed with: shipone connect <provider> / shipone disconnect <provider>`));
+  ctx.ui.note(lines.join("\n"), "ShipOne account info");
 }

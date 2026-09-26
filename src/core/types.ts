@@ -1,7 +1,7 @@
 /** Hosts ShipOne can deploy a frontend to. Add new ones here and in providers/index.ts. */
-export const FRONTEND_PROVIDERS = ["vercel"] as const;
+export const FRONTEND_PROVIDERS = ["vercel", "netlify"] as const;
 /** Hosts ShipOne can deploy a backend to. */
-export const BACKEND_PROVIDERS = ["render"] as const;
+export const BACKEND_PROVIDERS = ["render", "railway"] as const;
 
 export type FrontendProviderName = (typeof FRONTEND_PROVIDERS)[number];
 export type BackendProviderName = (typeof BACKEND_PROVIDERS)[number];
@@ -12,7 +12,9 @@ export type Role = "frontend" | "backend";
 
 export const PROVIDER_LABELS: Record<ProviderName, string> = {
   vercel: "Vercel",
+  netlify: "Netlify",
   render: "Render",
+  railway: "Railway",
 };
 
 export function isFrontendProvider(v: unknown): v is FrontendProviderName {

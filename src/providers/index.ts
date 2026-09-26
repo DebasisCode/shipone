@@ -2,6 +2,8 @@ import { ShipOneError } from "../core/errors.js";
 import type { Store } from "../core/store.js";
 import { PROVIDER_LABELS, type BackendProviderName, type FrontendProviderName, type ProviderName } from "../core/types.js";
 import type { FetchLike } from "./http.js";
+import { NetlifyHost } from "./netlify.js";
+import { RailwayHost } from "./railway.js";
 import { RenderHost } from "./render.js";
 import type { BackendHost, FrontendHost } from "./types.js";
 import { VercelHost } from "./vercel.js";
@@ -29,6 +31,11 @@ export function vercelHost(ctx: ProviderEnv, token = requireToken(ctx, "vercel")
   return new VercelHost(token, { teamId: cfg?.teamId, teamSlug: cfg?.teamSlug, fetch: ctx.fetch, baseUrl: baseUrl(ctx, "vercel") });
 }
 
+export function netlifyHost(ctx: ProviderEnv, token = requireToken(ctx, "netlify")): NetlifyHost {
+  const cfg = ctx.store.readConfig().netlify;
+  return new NetlifyHost(token, { accountId: cfg?.accountId, fetch: ctx.fetch, baseUrl: baseUrl(ctx, "netlify") });
+}
+
 export function renderHost(ctx: ProviderEnv, token = requireToken(ctx, "render")): RenderHost {
   const cfg = ctx.store.readConfig().render;
   return new RenderHost(token, {
@@ -40,10 +47,17 @@ export function renderHost(ctx: ProviderEnv, token = requireToken(ctx, "render")
   });
 }
 
+export function railwayHost(ctx: ProviderEnv, token = requireToken(ctx, "railway")): RailwayHost {
+  const cfg = ctx.store.readConfig().railway;
+  return new RailwayHost(token, { workspaceId: cfg?.workspaceId, fetch: ctx.fetch, baseUrl: baseUrl(ctx, "railway") });
+}
+
 export function frontendHost(ctx: ProviderEnv, name: FrontendProviderName): FrontendHost {
   switch (name) {
     case "vercel":
       return vercelHost(ctx);
+    case "netlify":
+      return netlifyHost(ctx);
   }
 }
 
@@ -51,5 +65,7 @@ export function backendHost(ctx: ProviderEnv, name: BackendProviderName): Backen
   switch (name) {
     case "render":
       return renderHost(ctx);
+    case "railway":
+      return railwayHost(ctx);
   }
 }

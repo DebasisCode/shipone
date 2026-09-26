@@ -4,6 +4,8 @@ import type { Context } from "../core/context.js";
 import { ShipOneError } from "../core/errors.js";
 import { TOKEN_ENV_VARS } from "../core/store.js";
 import { ALL_PROVIDERS, isProviderName, PROVIDER_LABELS, type ProviderName } from "../core/types.js";
+import { NetlifyHost, NETLIFY_TOKEN_URL } from "../providers/netlify.js";
+import { RailwayHost, RAILWAY_TOKEN_URL } from "../providers/railway.js";
 import { RenderHost, RENDER_TOKEN_URL } from "../providers/render.js";
 import { VercelHost, VERCEL_TOKEN_URL } from "../providers/vercel.js";
 
@@ -73,9 +75,49 @@ export async function connectVercel(ctx: Context, opts: { token?: string } = {})
   ctx.store.setToken("vercel", token);
   ctx.store.updateConfig((c) => {
     c.vercel = team ? { teamId: team.id, teamSlug: team.slug } : {};
-    c.defaults.frontend ??= "vercel";
   });
   ctx.ui.success(`Connected Vercel as ${pc.bold(user.username)}${team ? ` (team ${team.slug})` : ""}.`);
+}
+
+export async function connectNetlify(ctx: Context, opts: { token?: string } = {}) {
+  const token =
+    opts.token ??
+    (await askToken(
+      ctx,
+      "netlify",
+      NETLIFY_TOKEN_URL,
+      "Create a personal access token under User applications → Personal access tokens in the Netlify UI.",
+    ));
+  const host = new NetlifyHost(token, { fetch: ctx.fetch, baseUrl: baseUrl(ctx, "netlify") });
+
+  const spin = ctx.ui.spinner();
+  spin.start("Checking your Netlify token");
+  let user: Awaited<ReturnType<NetlifyHost["whoami"]>>;
+  let accounts: Awaited<ReturnType<NetlifyHost["listAccounts"]>>;
+  try {
+    user = await host.whoami();
+    accounts = await host.listAccounts();
+  } catch (err) {
+    spin.fail("Netlify didn't accept that token");
+    throw err;
+  }
+  spin.stop(`Token works: signed in as ${user.full_name ?? user.email ?? user.id}`);
+
+  let account = accounts[0];
+  if (accounts.length > 1) {
+    const pick = await ctx.ui.select({
+      message: "Which Netlify account (team) should ShipOne use?",
+      choices: accounts.map((a) => ({ value: a.id, label: a.name, hint: a.slug })),
+      initial: account?.id,
+    });
+    account = accounts.find((a) => a.id === pick)!;
+  }
+
+  ctx.store.setToken("netlify", token);
+  ctx.store.updateConfig((c) => {
+    c.netlify = account ? { accountId: account.id, accountName: account.name } : {};
+  });
+  ctx.ui.success(`Connected Netlify${account ? ` team ${pc.bold(account.name)}` : ""}.`);
 }
 
 export async function connectRender(ctx: Context, opts: { token?: string } = {}) {
@@ -109,32 +151,97 @@ export async function connectRender(ctx: Context, opts: { token?: string } = {})
   ctx.store.setToken("render", token);
   ctx.store.updateConfig((c) => {
     c.render = { ...c.render, ownerId: owner.id, ownerName: owner.name };
-    c.defaults.backend ??= "render";
   });
   ctx.ui.success(`Connected Render workspace ${pc.bold(owner.name)}.`);
 }
 
+export async function connectRailway(ctx: Context, opts: { token?: string } = {}) {
+  const token =
+    opts.token ??
+    (await askToken(
+      ctx,
+      "railway",
+      RAILWAY_TOKEN_URL,
+      "Create a token under Account Settings → API Tokens in the Railway dashboard.\nUse an account token (or a team token for a specific workspace).",
+    ));
+  const host = new RailwayHost(token, { fetch: ctx.fetch, baseUrl: baseUrl(ctx, "railway") });
+
+  const spin = ctx.ui.spinner();
+  spin.start("Checking your Railway token");
+  let me: Awaited<ReturnType<RailwayHost["whoami"]>>;
+  try {
+    me = await host.whoami();
+  } catch (err) {
+    spin.fail("Railway didn't accept that token");
+    throw err;
+  }
+  spin.stop(`Token works: signed in as ${me.name}`);
+
+  let workspace: { id: string; name: string } | undefined;
+  if (me.workspaces.length > 0) {
+    const pick = await ctx.ui.select({
+      message: "Which Railway workspace should ShipOne deploy to?",
+      choices: [
+        { value: "__personal", label: `${me.name} (personal account)` },
+        ...me.workspaces.map((w) => ({ value: w.id, label: w.name })),
+      ],
+      initial: "__personal",
+    });
+    workspace = me.workspaces.find((w) => w.id === pick);
+  }
+
+  ctx.store.setToken("railway", token);
+  ctx.store.updateConfig((c) => {
+    c.railway = workspace ? { workspaceId: workspace.id, workspaceName: workspace.name } : {};
+  });
+  ctx.ui.success(`Connected Railway${workspace ? ` workspace ${pc.bold(workspace.name)}` : ` as ${pc.bold(me.name)}`}.`);
+}
+
 export async function connect(ctx: Context, provider: string | undefined, opts: { token?: string }) {
   if (!provider) {
-    provider = await ctx.ui.select({
-      message: "Which provider do you want to connect?",
-      choices: ALL_PROVIDERS.map((p) => ({ value: p, label: PROVIDER_LABELS[p] })),
+    const picked = await ctx.ui.select({
+      message: "Which provider do you want to connect? (existing connections stay as they are)",
+      choices: ALL_PROVIDERS.map((p) => ({
+        value: p,
+        label: `${PROVIDER_LABELS[p]}${ctx.store.getToken(p) ? pc.dim(" — already connected, this replaces the token") : ""}`,
+      })),
     });
+    provider = picked;
   }
   if (!isProviderName(provider)) {
     throw new ShipOneError(`Unknown provider "${provider}".`, `Supported: ${ALL_PROVIDERS.join(", ")}.`);
   }
-  if (provider === "vercel") await connectVercel(ctx, opts);
-  else await connectRender(ctx, opts);
+  switch (provider) {
+    case "vercel":
+      return connectVercel(ctx, opts);
+    case "netlify":
+      return connectNetlify(ctx, opts);
+    case "render":
+      return connectRender(ctx, opts);
+    case "railway":
+      return connectRailway(ctx, opts);
+  }
+}
+
+/** A provider needs more than a token before it can deploy (e.g. a workspace picked). */
+function needsSetup(ctx: Context, provider: ProviderName): boolean {
+  const cfg = ctx.store.readConfig();
+  switch (provider) {
+    // The config section appears (even empty) once connect has run.
+    case "netlify":
+      return cfg.netlify === undefined;
+    case "railway":
+      return cfg.railway === undefined;
+    default:
+      return false;
+  }
 }
 
 /** Make sure we have a token; offer to connect right now if not. */
 export async function ensureConnected(ctx: Context, provider: ProviderName) {
   if (ctx.store.getToken(provider)) {
-    if (provider === "render" && !ctx.store.readConfig().render?.ownerId) {
-      // Token from RENDER_API_KEY but never picked a workspace: do it now.
-      await connectRender(ctx, { token: ctx.store.getToken("render") });
-    }
+    // Token from the environment, but the account/workspace was never picked: do it now.
+    if (needsSetup(ctx, provider)) await connect(ctx, provider, { token: ctx.store.getToken(provider) });
     return;
   }
   if (!ctx.ui.interactive) {
@@ -144,8 +251,7 @@ export async function ensureConnected(ctx: Context, provider: ProviderName) {
     );
   }
   ctx.ui.info(`${PROVIDER_LABELS[provider]} isn't connected yet, so let's do that now.`);
-  if (provider === "vercel") await connectVercel(ctx);
-  else await connectRender(ctx);
+  await connect(ctx, provider, {});
 }
 
 export function disconnect(ctx: Context, provider: string) {

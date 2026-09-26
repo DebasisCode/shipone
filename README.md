@@ -1,6 +1,6 @@
 # shipone
 
-Deploy a full-stack app to **your own** Vercel and Render accounts with one command. ShipOne creates the services, connects them to each other (API URL, CORS, env vars) and deploys the exact commit you pushed.
+Deploy a full-stack app to **your own** Vercel, Netlify, Render or Railway accounts with one command. ShipOne creates the services, connects them to each other (API URL, CORS, env vars) and deploys the exact commit you pushed.
 
 ```bash
 git push
@@ -39,26 +39,35 @@ npx shipone
 ## One-time setup
 
 ```bash
-shipone connect vercel   # opens vercel.com/account/tokens, paste a token
-shipone connect render   # opens Render → Account Settings → API Keys, paste a key
+shipone connect vercel    # frontend: opens vercel.com/account/tokens, paste a token
+shipone connect netlify   # frontend: opens app.netlify.com/user/applications, paste a token
+shipone connect render    # backend: opens Render → Account Settings → API Keys, paste a key
+shipone connect railway   # backend: opens railway.com/account/tokens, paste a token
 ```
 
-Tokens are checked right away and stored in `~/.shipone/credentials.json`, which only you can read. `VERCEL_TOKEN` and `RENDER_API_KEY` env vars work too and take precedence.
+Connect one frontend host and one backend host (or both of each). Connecting a new provider never touches the existing ones — run `shipone connect <provider>` (or just `shipone connect` and pick one) any time, and `shipone account` shows who you are on each connected provider. Tokens are checked right away and stored in `~/.shipone/credentials.json`, which only you can read. `VERCEL_TOKEN`, `NETLIFY_AUTH_TOKEN`, `RENDER_API_KEY` and `RAILWAY_TOKEN` env vars work too and take precedence.
 
-Vercel and Render build from GitHub, so their GitHub apps need access to your repo. If they can't see it, ShipOne tells you which app to install.
+The hosts build from GitHub, so their GitHub apps need access to your repo. If they can't see it, ShipOne tells you which app to install.
+
+### Which provider gets used?
+
+- `.shipone.yml` (per repo) → per-repo override (`shipone config set backend railway --repo`) win outright.
+- An account default (`shipone config set frontend netlify`) preselects the deploy question but doesn't silence it.
+- Otherwise: if only one provider is connected for that side, it's used automatically. If several are connected, `shipone deploy` asks which one to use, and remembers the answer in `.shipone.yml`.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `shipone deploy` | First run: find the frontend/backend folders, create the Vercel project + Render service, wire the URLs, set env vars, deploy. Later runs: redeploy the latest pushed commit. |
+| `shipone deploy` | First run: find the frontend/backend folders, create the frontend project + backend service on your chosen hosts, wire the URLs, set env vars, deploy. Later runs: redeploy the latest pushed commit. |
 | `shipone deploy --dry-run` | Show the plan and pre-flight warnings; changes nothing. |
 | `shipone status` | Live URLs, deploy state, and whether GitHub has newer code. |
 | `shipone logs [backend\|frontend] [-n 200]` | Backend runtime logs / frontend build logs. |
 | `shipone env set KEY=value ...` | Set production env vars. `VITE_`/`NEXT_PUBLIC_`/`REACT_APP_` keys go to the frontend, others to the backend (override with `--frontend` / `--backend`). |
 | `shipone env ls` | List env var names on each side. |
-| `shipone config` / `config set <key> <value> [--repo]` | Account defaults (frontend → vercel, backend → render, `render.region`, `render.plan`). |
-| `shipone connect` / `disconnect <provider>` | Manage provider tokens. |
+| `shipone config` / `config set <key> <value> [--repo]` | Account defaults (`frontend`, `backend`, `render.region`, `render.plan`). The defaults preselect the deploy question; they don't silence it. |
+| `shipone account` | Live account info: who you are on each connected provider, which team/workspace is in use. |
+| `shipone connect` / `disconnect <provider>` | Manage provider tokens (vercel, netlify, render, railway). Connecting adds to your set; nothing existing is disconnected. |
 
 Add `--yes` before any command to run without prompts (CI, scripts). It fails with a clear message when it needs an answer.
 
@@ -72,10 +81,10 @@ Add `--yes` before any command to run without prompts (CI, scripts). It fails wi
    - Env-var names are matched per framework: `VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `VUE_APP_`, `NG_APP_`, `PUBLIC_` (SvelteKit/Astro), `NUXT_PUBLIC_`, `GATSBY_`, `REMIX_PUBLIC_`.
 3. **Pre-flight checks.** It flags hardcoded `http://localhost:5000` URLs (with file:line), a backend that ignores `process.env.PORT` or only listens on localhost, `nodemon` in `start`, and missing SPA rewrites for React Router.
 4. **Asks only for real secrets.** It reads `.env.example`. Keys it can fill itself (API URL, CORS, `PORT`) are handled automatically. Values from your local `.env` are offered, unless they point at localhost. Non-secret defaults are used as-is. For the rest it prompts, or reads `SHIPONE_ENV_<KEY>` in `--yes` mode. Keys already set on the provider aren't asked for again. All of this happens **before** anything is created.
-5. **Creates or reuses services.** It creates or reuses the Vercel project (linked to GitHub, deploy-on-push off) and the Render web service (auto-deploy off, free plan by default). The backend URL goes into `VITE_API_URL` (or whatever name your code already uses). The frontend URL goes into `CORS_ORIGIN` and `FRONTEND_URL`, plus any matching key in `.env.example` such as `CLIENT_URL`.
+5. **Creates or reuses services.** It creates or reuses the frontend project and backend service on your chosen hosts (linked to GitHub, deploy-on-push off where the API allows it). The backend URL goes into `VITE_API_URL` (or whatever name your code already uses). The frontend URL goes into `CORS_ORIGIN` and `FRONTEND_URL`, plus any matching key in `.env.example` such as `CLIENT_URL`.
 6. **Deploys the exact commit** on both sides and waits. If a build fails, it prints the last log lines.
 
-Deploys only happen when you run `shipone deploy`. Pushing to GitHub never deploys.
+Deploys only happen when you run `shipone deploy`. Pushing to GitHub never deploys (Netlify keeps its own deploy-on-push — its API can't disable that without also blocking manual builds).
 
 ## `.shipone.yml`
 
@@ -86,17 +95,17 @@ deploy: true              # false = never deploy this repo
 name: todo                # optional base name for the services
 frontend:
   path: client
-  provider: vercel
+  provider: vercel        # vercel or netlify
   apiUrlEnv: VITE_API_URL # optional; detected from your code
 backend:
   path: server
-  provider: render
+  provider: render        # render or railway
   buildCommand: npm ci    # optional overrides
   startCommand: npm start
   dockerfilePath: ./Dockerfile # when the backend builds from a Dockerfile
 ```
 
-Providers are chosen in this order: `.shipone.yml`, then the per-repo override (`shipone config set backend render --repo`), then account defaults, then ShipOne asks you.
+Providers are chosen in this order: `.shipone.yml`, then the per-repo override (`shipone config set backend render --repo`), then account defaults, then the connected-provider rules above (one connected → automatic, several → ask).
 
 Service ids and URLs live in `~/.shipone/state.json`. If that file is lost (for example on a new laptop), ShipOne finds the existing services by name and repo instead of creating duplicates.
 
@@ -111,7 +120,7 @@ And your frontend should call the API through the env var: `` fetch(`${import.me
 
 ```bash
 npm install
-npm test          # unit tests + end-to-end CLI tests against a local fake of the Vercel/Render APIs
+npm test          # unit tests + end-to-end CLI tests against a local fake of all four provider APIs
 npm run typecheck
 npm run dev -- deploy --dry-run   # run from source
 npm run smoke     # slow: install, build and boot a real app per supported stack (see below)

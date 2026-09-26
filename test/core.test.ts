@@ -72,7 +72,7 @@ describe(".shipone.yml", () => {
       frontend: { path: "client", provider: "vercel" },
       backend: { path: "server" },
     });
-    expect(() => validateRepoConfig({ backend: { path: "server", provider: "heroku" } })).toThrow(/backend.provider must be one of: render/);
+    expect(() => validateRepoConfig({ backend: { path: "server", provider: "heroku" } })).toThrow(/backend.provider must be one of: render, railway/);
     expect(() => validateRepoConfig({ deploy: "yes" })).toThrow(/deploy must be true or false/);
     expect(() => validateRepoConfig({ frontend: {} })).toThrow(/frontend.path is required/);
   });
