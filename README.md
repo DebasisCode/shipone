@@ -10,7 +10,7 @@
 
 **Free & open source.** Works with your own Vercel, Netlify, Render and Railway accounts.
 
-<img src="https://raw.githubusercontent.com/DebasisCode/shipone/main/img/shiponeUI.png" alt="ShipOne in the terminal" width="720">
+<img src="img/shiponeUI.png" alt="ShipOne in the terminal" width="720">
 
 </div>
 
@@ -100,7 +100,7 @@ shipone
 
 Pick **Deploy this project**, confirm, and watch your app go live.
 
-<img src="https://raw.githubusercontent.com/DebasisCode/shipone/main/img/sucessfulDeployment.png" alt="A successful ShipOne deployment" width="720">
+<img src="img/sucessfulDeployment.png" alt="A successful ShipOne deployment" width="720">
 
 ## What you can do day-to-day
 
