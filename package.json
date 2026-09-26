@@ -1,7 +1,7 @@
 {
   "name": "shipone",
   "version": "0.1.0",
-  "description": "Deploy a full-stack app (frontend + backend) to your own Vercel, Netlify, Render or Railway accounts with one command, wired together.",
+  "description": "Ship your full-stack project in under 1 minute — with one command. Deploys into your own Vercel, Netlify, Render or Railway accounts, wired together.",
   "type": "module",
   "bin": {
     "shipone": "dist/cli.js"

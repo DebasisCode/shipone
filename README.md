@@ -1,132 +1,170 @@
-# shipone
+<div align="center">
 
-Deploy a full-stack app to **your own** Vercel, Netlify, Render or Railway accounts with one command. ShipOne creates the services, connects them to each other (API URL, CORS, env vars) and deploys the exact commit you pushed.
+# ShipOne
+
+### **Ship your full-stack project in under 1 minute — with one command.**
+
+[![npm version](https://img.shields.io/npm/v/shipone.svg)](https://www.npmjs.com/package/shipone)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/DebasisCode/shipone/blob/main/LICENSE)
+[![Node](https://img.shields.io/badge/node-22%2B-blue.svg)](https://nodejs.org)
+
+**Free & open source.** Works with your own Vercel, Netlify, Render and Railway accounts.
+
+<img src="https://raw.githubusercontent.com/DebasisCode/shipone/main/img/shiponeUI.png" alt="ShipOne in the terminal" width="720">
+
+</div>
+
+---
+
+## The problem every developer knows
+
+You just finished building your app. The code is done. But the app is not **live** — and going live is the annoying part:
+
+- Open 3 different websites and create the same project twice (frontend here, backend there)
+- Copy the frontend's web address, paste it into the backend's settings
+- Copy the backend's web address, paste it into the frontend's code
+- Hit the scary browser security error because the two halves can't talk to each other
+- Google the fix, change a setting, redeploy, hope it works
+
+**30–60 minutes of clicking, every single project.** And you'll do it all again tomorrow.
+
+## The solution
 
 ```bash
-git push
-shipone deploy
+shipone
 ```
 
-```
-◇  Deploy plan
-│  Frontend  ./client (vite) → Vercel project "todo"
-│             backend URL goes in VITE_API_URL
-│  Backend   ./server (express) → Render service "todo-api"
-│             build: npm ci
-│             start: npm start
-│             frontend URL goes in CORS_ORIGIN and FRONTEND_URL
-│  Commit    me/todo@main 1a5f9fe
-│
-◇  Deployed 1a5f9fe
-│  Frontend  https://todo.vercel.app  ● live
-│  Backend   https://todo-api.onrender.com  ● live
-```
+That's it. ShipOne looks at your project, understands what it's made of, and takes it live — while you watch.
 
-## Install
+- **It figures everything out by itself** — which folder is your website, which is your server, how to build and start each one. 10+ frontend stacks and 6+ backend stacks supported.
+- **It introduces your frontend and backend to each other** — addresses exchanged both ways, and the browser security wall configured before anything goes live. No errors on the first visit. Ever.
+- **It asks only for what it can't know** — like your database password. Everything else is filled in for you.
+- **It watches the build for you** — and if something fails, it shows you exactly the lines that broke.
+- **Run it again anytime** — it finds your existing project instead of creating a second one. Two runs, same app.
 
-Requires Node 22.12+ and git.
+## What makes it different
+
+Most deploy tools do **one half** of your app and leave the hard part to you.
+
+| | Other tools | ShipOne |
+|---|---|---|
+| Deploys your frontend | Yes | Yes |
+| Deploys your backend | Yes | Yes |
+| **Wires them together** (API address + security) | You do it manually | Automatic, before launch |
+| **Your own accounts** — no vendor lock-in, no markup | Some take a cut or lock you in | Deploys into **your** Vercel / Netlify / Render / Railway |
+| **Catches mistakes before they go live** (hardcoded localhost, missing port, forgotten secrets) | No | Warns you *before* deploying |
+| Multiple hosts, your pick per project | No | Connect all four, choose per project |
+
+**Nobody else connects your full-stack app end-to-end in one command. That's the whole point of ShipOne.**
+
+## Quick start (under 60 seconds)
+
+**1. Install it**
 
 ```bash
 npm install -g shipone
 ```
 
-Or run directly without installing:
+<details>
+<summary>Other package managers</summary>
+
+```bash
+pnpm add -g shipone
+```
+```bash
+yarn global add shipone
+```
+```bash
+bun add -g shipone
+```
+
+</details>
+
+No install at all? Run it directly:
 
 ```bash
 npx shipone
 ```
 
-## One-time setup
+> You need **Node.js 22+** and **git** on your machine.
+
+**2. Connect your account (one time ever)**
+
+ShipOne opens your browser, you paste a token from your hosting dashboard — done. It's stored only on your machine, readable only by you.
+
+**3. Go live**
 
 ```bash
-shipone connect vercel    # frontend: opens vercel.com/account/tokens, paste a token
-shipone connect netlify   # frontend: opens app.netlify.com/user/applications, paste a token
-shipone connect render    # backend: opens Render → Account Settings → API Keys, paste a key
-shipone connect railway   # backend: opens railway.com/account/tokens, paste a token
+shipone
 ```
 
-Connect one frontend host and one backend host (or both of each). Connecting a new provider never touches the existing ones — run `shipone connect <provider>` (or just `shipone connect` and pick one) any time, and `shipone account` shows who you are on each connected provider. Tokens are checked right away and stored in `~/.shipone/credentials.json`, which only you can read. `VERCEL_TOKEN`, `NETLIFY_AUTH_TOKEN`, `RENDER_API_KEY` and `RAILWAY_TOKEN` env vars work too and take precedence.
+Pick **Deploy this project**, confirm, and watch your app go live.
 
-The hosts build from GitHub, so their GitHub apps need access to your repo. If they can't see it, ShipOne tells you which app to install.
+<img src="https://raw.githubusercontent.com/DebasisCode/shipone/main/img/sucessfulDeployment.png" alt="A successful ShipOne deployment" width="720">
 
-### Which provider gets used?
+## What you can do day-to-day
 
-- `.shipone.yml` (per repo) → per-repo override (`shipone config set backend railway --repo`) win outright.
-- An account default (`shipone config set frontend netlify`) preselects the deploy question but doesn't silence it.
-- Otherwise: if only one provider is connected for that side, it's used automatically. If several are connected, `shipone deploy` asks which one to use, and remembers the answer in `.shipone.yml`.
+| Type this | What happens |
+|---|---|
+| `shipone` | Opens the menu — deploy, preview, status, logs, connect more hosts |
+| `shipone status` | Is my app live? Is GitHub ahead of what's deployed? |
+| `shipone logs` | See what your app is saying (or why a build failed) |
+| `shipone env set KEY=value` | Add a setting to the live app (like an API key), then run the menu to apply it |
+| `shipone account` | See who you're signed in as on each host |
+| `shipone uninstall` | Make ShipOne forget everything it stored on this machine |
 
-## Commands
+## Which hosts can I use?
 
-| Command | What it does |
-| --- | --- |
-| `shipone deploy` | First run: find the frontend/backend folders, create the frontend project + backend service on your chosen hosts, wire the URLs, set env vars, deploy. Later runs: redeploy the latest pushed commit. |
-| `shipone deploy --dry-run` | Show the plan and pre-flight warnings; changes nothing. |
-| `shipone status` | Live URLs, deploy state, and whether GitHub has newer code. |
-| `shipone logs [backend\|frontend] [-n 200]` | Backend runtime logs / frontend build logs. |
-| `shipone env set KEY=value ...` | Set production env vars. `VITE_`/`NEXT_PUBLIC_`/`REACT_APP_` keys go to the frontend, others to the backend (override with `--frontend` / `--backend`). |
-| `shipone env ls` | List env var names on each side. |
-| `shipone config` / `config set <key> <value> [--repo]` | Account defaults (`frontend`, `backend`, `render.region`, `render.plan`). The defaults preselect the deploy question; they don't silence it. |
-| `shipone account` | Live account info: who you are on each connected provider, which team/workspace is in use. |
-| `shipone connect` / `disconnect <provider>` | Manage provider tokens (vercel, netlify, render, railway). Connecting adds to your set; nothing existing is disconnected. |
-| `shipone uninstall [--force]` | Remove everything ShipOne stored on this machine (`~/.shipone`: tokens, service ids, config). Deployed apps keep running; the CLI itself goes with `npm uninstall -g shipone`. |
+| Your website lives on | Your server lives on |
+|---|---|
+| **Vercel** · **Netlify** | **Render** · **Railway** |
 
-Add `--yes` before any command to run without prompts (CI, scripts). It fails with a clear message when it needs an answer.
+Connect one of each — or all four. If several are connected, ShipOne simply asks which one you want for this project, remembers your choice, and never asks again for that project.
 
-## What `shipone deploy` does
+## It plays nice with your project
 
-1. **Checks git.** Your branch must be on GitHub. If you have unpushed commits, it stops, or offers to deploy what's already on GitHub.
-2. **Detects the stack.** It looks in `client/`, `frontend/`, `web/`, `server/`, `backend/`, `api/`, `apps/*`, `packages/*`, `services/*`, any folder listed in your pnpm/npm/yarn workspaces, and the repo root.
-   - **Frontends:** Vite, Next.js, Create React App, Vue CLI, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix, React Router v7, SolidStart (npm, yarn or pnpm).
-   - **Backends:** Node (Express, Fastify, Koa, Hapi, NestJS, Hono, AdonisJS, or a plain `node:http` server in `server/`/`backend/`/`api/`), Python (FastAPI, Flask, Django — pip, Poetry, uv or Pipenv), Go (Gin, Echo, Fiber, chi, `net/http`), Rust (Axum, Actix, Rocket), Ruby (Rails, Sinatra) — or anything with a `Dockerfile`.
-   - **Monorepos:** pnpm/npm/yarn workspaces and Turborepo layouts. The backend's workspace dependencies are built before it (pnpm), the root lockfile is used, and the pnpm version is pinned from `packageManager` or the lockfile format.
-   - Env-var names are matched per framework: `VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, `VUE_APP_`, `NG_APP_`, `PUBLIC_` (SvelteKit/Astro), `NUXT_PUBLIC_`, `GATSBY_`, `REMIX_PUBLIC_`.
-3. **Pre-flight checks.** It flags hardcoded `http://localhost:5000` URLs (with file:line), a backend that ignores `process.env.PORT` or only listens on localhost, `nodemon` in `start`, and missing SPA rewrites for React Router.
-4. **Asks only for real secrets.** It reads `.env.example`. Keys it can fill itself (API URL, CORS, `PORT`) are handled automatically. Values from your local `.env` are offered, unless they point at localhost. Non-secret defaults are used as-is. For the rest it prompts, or reads `SHIPONE_ENV_<KEY>` in `--yes` mode. Keys already set on the provider aren't asked for again. All of this happens **before** anything is created.
-5. **Creates or reuses services.** It creates or reuses the frontend project and backend service on your chosen hosts (linked to GitHub, deploy-on-push off where the API allows it). The backend URL goes into `VITE_API_URL` (or whatever name your code already uses). The frontend URL goes into `CORS_ORIGIN` and `FRONTEND_URL`, plus any matching key in `.env.example` such as `CLIENT_URL`.
-6. **Deploys the exact commit** on both sides and waits. If a build fails, it prints the last log lines.
+On the first deploy, ShipOne saves a tiny `shipone.yml` file in your repo — your project's memory. Commit it, and anyone on your team gets the exact same one-command experience.
 
-Deploys only happen when you run `shipone deploy`. Pushing to GitHub never deploys (Netlify keeps its own deploy-on-push — its API can't disable that without also blocking manual builds).
+Want to fine-tune it? Open the file — folder names, host choice, custom build commands. It's 6 lines of plain settings.
 
-## `.shipone.yml`
+## Uninstall
 
-Written on the first deploy. Commit it.
-
-```yaml
-deploy: true              # false = never deploy this repo
-name: todo                # optional base name for the services
-frontend:
-  path: client
-  provider: vercel        # vercel or netlify
-  apiUrlEnv: VITE_API_URL # optional; detected from your code
-backend:
-  path: server
-  provider: render        # render or railway
-  buildCommand: npm ci    # optional overrides
-  startCommand: npm start
-  dockerfilePath: ./Dockerfile # when the backend builds from a Dockerfile
-```
-
-Providers are chosen in this order: `.shipone.yml`, then the per-repo override (`shipone config set backend render --repo`), then account defaults, then the connected-provider rules above (one connected → automatic, several → ask).
-
-Service ids and URLs live in `~/.shipone/state.json`. If that file is lost (for example on a new laptop), ShipOne finds the existing services by name and repo instead of creating duplicates.
-
-## Your backend should
-
-- Listen on `process.env.PORT`: `app.listen(process.env.PORT || 5000)`
-- Allow the frontend origin: `app.use(cors({ origin: process.env.CORS_ORIGIN }))`
-
-And your frontend should call the API through the env var: `` fetch(`${import.meta.env.VITE_API_URL}/api/todos`) ``.
-
-## Development
+Two steps — first make ShipOne forget your data, then remove the tool:
 
 ```bash
-npm install
-npm test          # unit tests + end-to-end CLI tests against a local fake of all four provider APIs
-npm run typecheck
-npm run dev -- deploy --dry-run   # run from source
-npm run smoke     # slow: install, build and boot a real app per supported stack (see below)
+shipone uninstall          # forgets tokens, settings and project history
 ```
 
-`npm run smoke` writes a small real project for each popular stack (pnpm monorepo + TypeScript Fastify, Express, Hono, Yarn 4, FastAPI, Flask, Django, uv, Poetry, Pipenv, Go, Sinatra, ...), runs ShipOne's detection on it, then runs the detected build and start commands in a Render-like environment (no global pnpm, Python in a virtualenv, `$PORT` set) and checks the server answers HTTP. Add `--all` to include Rust, or pass words to filter: `npm run smoke -- fastapi go`. Stacks whose toolchain isn't installed are skipped.
+Then remove the CLI itself:
 
-See [docs/PLAN.md](docs/PLAN.md) for the design, v1 scope and roadmap.
+```bash
+npm uninstall -g shipone
+```
+```bash
+pnpm remove -g shipone
+```
+```bash
+yarn global remove shipone
+```
+```bash
+bun remove -g shipone
+```
+
+> **Your live apps are never touched.** They keep running in your Vercel / Netlify / Render / Railway accounts — uninstalling only cleans your machine.
+
+## Good to know
+
+- **Does pushing code auto-deploy?** No. Your app only changes when *you* run `shipone`. No surprise deploys.
+- **Does it touch my code?** It adds one small settings file. That's all.
+- **Where do my tokens live?** In a private file on your machine (`~/.shipone`). Never in your code, never sent anywhere but the host you chose.
+- **What does it cost?** Nothing. ShipOne is free and open source — you deploy into your own accounts, on their free tiers.
+
+---
+
+<div align="center">
+
+**Built for developers who'd rather ship than click.**
+
+[Star it on GitHub](https://github.com/DebasisCode/shipone) — [Report an issue](https://github.com/DebasisCode/shipone/issues)
+
+</div>

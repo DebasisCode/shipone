@@ -153,7 +153,7 @@ async function runInteractiveMenu(ctx: Context) {
 
 program
   .name("shipone")
-  .description("Deploy a full-stack app to your own Vercel, Netlify, Render or Railway accounts with one command, wired together.")
+  .description("Ship your full-stack project in under 1 minute — with one command. Deploys into your own Vercel, Netlify, Render or Railway accounts, wired together.")
   .version(version)
   .option("-y, --yes", "never prompt; use defaults and fail if input is required")
   .showHelpAfterError()
