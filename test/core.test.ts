@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { uninstall } from "../src/commands/connect.js";
 import { checkBackend, checkFrontend } from "../src/core/checks.js";
 import { detectApps, detectBackend, detectFrontend, pickObvious } from "../src/core/detect.js";
 import { parseEnv, planEnv } from "../src/core/envfile.js";
@@ -10,6 +11,7 @@ import { resolveProvider } from "../src/core/preferences.js";
 import { normalizeAppPath, readRepoConfig, validateRepoConfig, writeRepoConfig } from "../src/core/repoConfig.js";
 import { Store } from "../src/core/store.js";
 import { commitAll, FULLSTACK_FILES, git, makeRepo, tmpDir, writeFiles } from "./helpers.js";
+import { ScriptedUI, testContext } from "./helpers.js";
 
 describe("parseGitHubRemote", () => {
   it.each([
@@ -129,6 +131,38 @@ describe("Store", () => {
     const home = tmpDir();
     fs.writeFileSync(path.join(home, "config.json"), "{nope");
     expect(() => new Store({ SHIPONE_HOME: home }).readConfig()).toThrow(/not valid JSON/);
+  });
+});
+
+describe("shipone uninstall", () => {
+  it("wipes the shipone home after a confirmation and explains what survives", async () => {
+    const home = tmpDir("shipone-uninstall-");
+    const ctx = testContext({ cwd: home, ui: new ScriptedUI(true, [{ match: /tokens for Vercel/, answer: true }]), home });
+    ctx.store.setToken("vercel", "tok");
+    ctx.store.updateRepoState("me/app", (s) => (s.frontend = { provider: "vercel", projectId: "p", projectName: "app" }));
+    await uninstall(ctx);
+    expect(fs.existsSync(path.join(home, "credentials.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, "state.json"))).toBe(false);
+    expect(fs.existsSync(path.join(home, "config.json"))).toBe(false);
+    expect(fs.existsSync(home)).toBe(false); // empty dir removed
+    expect(ctx.ui.text_("success")).toContain("Removed tokens, service ids and config");
+    expect(ctx.ui.text_("info")).toContain("keep running");
+  });
+
+  it("keeps everything when the user declines, and --force skips the prompt", async () => {
+    const home = tmpDir("shipone-uninstall-");
+    const declining = testContext({ cwd: home, ui: new ScriptedUI(true, [{ match: /tokens for Render/, answer: false }]), home });
+    declining.store.setToken("render", "tok");
+    await expect(uninstall(declining)).rejects.toThrow(/Nothing was removed/);
+    expect(fs.existsSync(path.join(declining.store.dir, "credentials.json"))).toBe(true);
+
+    // Non-interactive without --force fails instead of wiping.
+    const scripted = testContext({ cwd: home, ui: new ScriptedUI(false, []), home });
+    await expect(uninstall(scripted)).rejects.toThrow(/needs a confirmation/);
+
+    const forced = testContext({ cwd: home, ui: new ScriptedUI(false, []), home });
+    await uninstall(forced, { force: true });
+    expect(fs.existsSync(path.join(forced.store.dir, "credentials.json"))).toBe(false);
   });
 });
 

@@ -68,6 +68,7 @@ The hosts build from GitHub, so their GitHub apps need access to your repo. If t
 | `shipone config` / `config set <key> <value> [--repo]` | Account defaults (`frontend`, `backend`, `render.region`, `render.plan`). The defaults preselect the deploy question; they don't silence it. |
 | `shipone account` | Live account info: who you are on each connected provider, which team/workspace is in use. |
 | `shipone connect` / `disconnect <provider>` | Manage provider tokens (vercel, netlify, render, railway). Connecting adds to your set; nothing existing is disconnected. |
+| `shipone uninstall [--force]` | Remove everything ShipOne stored on this machine (`~/.shipone`: tokens, service ids, config). Deployed apps keep running; the CLI itself goes with `npm uninstall -g shipone`. |
 
 Add `--yes` before any command to run without prompts (CI, scripts). It fails with a clear message when it needs an answer.
 

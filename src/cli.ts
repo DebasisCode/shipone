@@ -4,7 +4,7 @@ import * as clack from "@clack/prompts";
 import pc from "picocolors";
 import { createRequire } from "node:module";
 import { accountInfo, configKeysHelp, configSet, configShow } from "./commands/config.js";
-import { connect, disconnect } from "./commands/connect.js";
+import { connect, disconnect, uninstall } from "./commands/connect.js";
 import { deploy } from "./commands/deploy.js";
 import { envList, envSet, logs, status } from "./commands/project.js";
 import { createContext, type Context } from "./core/context.js";
@@ -213,6 +213,12 @@ program
   .argument("<provider>", "vercel, netlify, render or railway")
   .description("forget the stored token for a provider")
   .action(run((ctx, provider: string) => disconnect(ctx, provider)));
+
+program
+  .command("uninstall")
+  .option("--force", "remove without asking")
+  .description("remove everything ShipOne stored on this machine (~/.shipone: tokens, service ids, config). Deployed apps keep running.")
+  .action(run((ctx, opts: { force?: boolean }) => uninstall(ctx, opts)));
 
 const config = program
   .command("config")

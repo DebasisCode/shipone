@@ -135,7 +135,7 @@ export function readRepoConfig(root: string): RepoConfig | undefined {
 export function writeRepoConfig(root: string, cfg: RepoConfig) {
   const doc = new YAML.Document(JSON.parse(JSON.stringify({ deploy: cfg.deploy ?? true, ...cfg })));
   doc.commentBefore =
-    " ShipOne deploy settings (https://github.com/debasiscode/shipone).\n" +
+    " ShipOne deploy settings (https://github.com/DebasisCode/shipone).\n" +
     " Commit this file. Service ids/URLs are kept locally in ~/.shipone/state.json.";
   fs.writeFileSync(path.join(root, REPO_CONFIG_FILE), doc.toString());
 }

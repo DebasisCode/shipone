@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import pc from "picocolors";
 import type { Context } from "../core/context.js";
 import { ShipOneError } from "../core/errors.js";
@@ -261,4 +263,50 @@ export function disconnect(ctx: Context, provider: string) {
   ctx.store.setToken(provider, undefined);
   ctx.ui.success(`Removed the stored ${PROVIDER_LABELS[provider]} token.`);
   if (ctx.env[TOKEN_ENV_VARS[provider]]) ctx.ui.warn(`${TOKEN_ENV_VARS[provider]} is still set in your environment.`);
+}
+
+/**
+ * Remove everything ShipOne stored on this machine: provider tokens, per-repo
+ * service ids and account config (all under ~/.shipone). Deployed apps keep
+ * running in their provider accounts; this CLI and the token on the provider's
+ * side are untouched.
+ */
+export async function uninstall(ctx: Context, opts: { force?: boolean } = {}) {
+  const dir = ctx.store.dir;
+  const creds = ctx.store.readCredentials();
+  const connected = ALL_PROVIDERS.filter((p) => creds[p]);
+
+  if (!ctx.ui.interactive && !opts.force) {
+    throw new ShipOneError(
+      "`shipone uninstall` needs a confirmation.",
+      "Run it in a terminal and answer the prompt, or pass --force to skip it.",
+    );
+  }
+  if (ctx.ui.interactive && !opts.force) {
+    const ok = await ctx.ui.confirm({
+      message:
+        `Remove ${pc.bold(dir)} (tokens${connected.length ? ` for ${connected.map((p) => PROVIDER_LABELS[p]).join(", ")}` : ""}, ` +
+        "service ids, account config)? Your deployed apps keep running; this doesn't revoke tokens on the providers.",
+      initial: false,
+    });
+    if (!ok) throw new ShipOneError("Nothing was removed.");
+  }
+
+  // Each Store write renames a temp file over the target, so deleting the
+  // files directly is safe (no in-memory state is written back afterwards).
+  for (const file of ["credentials.json", "state.json", "config.json"]) {
+    fs.rmSync(path.join(dir, file), { force: true });
+  }
+  // Only drop the directory itself when ShipOne left nothing else in it.
+  try {
+    if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+  } catch {
+    /* directory missing or not empty: leave it */
+  }
+
+  ctx.ui.success(`Removed tokens, service ids and config from ${dir}.`);
+  ctx.ui.info("Deployed apps are untouched — they keep running in your Vercel/Netlify/Render/Railway accounts.");
+  ctx.ui.info("To revoke a token for good, delete it in the provider's dashboard (it was created by you, not ShipOne).");
+  ctx.ui.info("To remove the CLI itself: npm uninstall -g shipone (or npx users need nothing).");
+  if (ctx.env.SHIPONE_HOME) ctx.ui.warn(`SHIPONE_HOME is set (${ctx.env.SHIPONE_HOME}); the folder was removed but the env var remains.`);
 }

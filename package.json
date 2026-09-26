@@ -7,8 +7,17 @@
     "shipone": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DebasisCode/shipone.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DebasisCode/shipone/issues"
+  },
+  "homepage": "https://github.com/DebasisCode/shipone#readme",
   "engines": {
     "node": ">=22.12"
   },
