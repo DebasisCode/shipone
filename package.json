@@ -1,6 +1,6 @@
 {
   "name": "shipone",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Ship your full-stack project in under 1 minute — with one command. Deploys into your own Vercel, Netlify, Render or Railway accounts, wired together.",
   "type": "module",
   "bin": {
