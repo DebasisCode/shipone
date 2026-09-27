@@ -36,6 +36,8 @@ shipone
 
 That's it. ShipOne looks at your project, understands what it's made of, and takes it live — while you watch.
 
+<img src="img/shiponeDemo.gif" alt="ShipOne product demo" width="720">
+
 - **It figures everything out by itself** — which folder is your website, which is your server, how to build and start each one. 10+ frontend stacks and 6+ backend stacks supported.
 - **It introduces your frontend and backend to each other** — addresses exchanged both ways, and the browser security wall configured before anything goes live. No errors on the first visit. Ever.
 - **It asks only for what it can't know** — like your database password. Everything else is filled in for you.
