@@ -5,7 +5,8 @@
 ### **Ship your full-stack project in under 1 minute — with one command.**
 
 [![npm version](https://img.shields.io/npm/v/shipone.svg)](https://www.npmjs.com/package/shipone)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/DebasisCode/shipone/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![CI](https://github.com/DebasisCode/shipone/actions/workflows/ci.yml/badge.svg)](https://github.com/DebasisCode/shipone/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-22%2B-blue.svg)](https://nodejs.org)
 
 **Free & open source.** Works with your own Vercel, Netlify, Render and Railway accounts.
@@ -38,8 +39,8 @@ That's it. ShipOne looks at your project, understands what it's made of, and tak
 
 <img src="img/shiponeDemo.gif" alt="ShipOne product demo" width="720">
 
-- **It figures everything out by itself** — which folder is your website, which is your server, how to build and start each one. 10+ frontend stacks and 6+ backend stacks supported.
-- **It introduces your frontend and backend to each other** — addresses exchanged both ways, and the browser security wall configured before anything goes live. No errors on the first visit. Ever.
+- **It figures everything out by itself** — which folder is your website, which is your server, how to build and start each one. See the supported stacks below.
+- **It introduces your frontend and backend to each other** — addresses exchanged both ways, and the browser security wall configured before anything goes live, so the common first-visit CORS and env-var failures don't happen.
 - **It asks only for what it can't know** — like your database password. Everything else is filled in for you.
 - **It watches the build for you** — and if something fails, it shows you exactly the lines that broke.
 - **Run it again anytime** — it finds your existing project instead of creating a second one. Two runs, same app.
@@ -57,7 +58,7 @@ Most deploy tools do **one half** of your app and leave the hard part to you.
 | **Catches mistakes before they go live** (hardcoded localhost, missing port, forgotten secrets) | No | Warns you *before* deploying |
 | Multiple hosts, your pick per project | No | Connect all four, choose per project |
 
-**Nobody else connects your full-stack app end-to-end in one command. That's the whole point of ShipOne.**
+ShipOne's niche: **deploy a full-stack app into your own existing accounts, across four providers, with the frontend/backend wiring done for you** — no dashboard clicking, no vendor lock-in.
 
 ## Quick start (under 60 seconds)
 
@@ -104,16 +105,6 @@ Pick **Deploy this project**, confirm, and watch your app go live.
 
 <img src="img/sucessfulDeployment.png" alt="A successful ShipOne deployment" width="720">
 
-## What you can do day-to-day
-
-| Type this | What happens |
-|---|---|
-| `shipone` | Opens the menu — deploy, preview, status, logs, connect more hosts |
-| `shipone status` | Is my app live? Is GitHub ahead of what's deployed? |
-| `shipone logs` | See what your app is saying (or why a build failed) |
-| `shipone env set KEY=value` | Add a setting to the live app (like an API key), then run the menu to apply it |
-| `shipone account` | See who you're signed in as on each host |
-| `shipone uninstall` | Make ShipOne forget everything it stored on this machine |
 
 ## Which hosts can I use?
 
@@ -122,6 +113,28 @@ Pick **Deploy this project**, confirm, and watch your app go live.
 | **Vercel** · **Netlify** | **Render** · **Railway** |
 
 Connect one of each — or all four. If several are connected, ShipOne simply asks which one you want for this project, remembers your choice, and never asks again for that project.
+
+## Supported stacks
+
+ShipOne detects your folders automatically; you can always override them in `.shipone.yml`.
+
+**Frontend** — Vite, Next.js, Create React App, Angular, SvelteKit, Astro, Nuxt, Gatsby, Remix, React Router (v7 framework mode), SolidStart, Vue CLI.
+
+**Backend** —
+- **Node.js**: Express, Fastify, Koa, Hapi, NestJS, Hono, Adonis (npm / yarn / pnpm)
+- **Python**: FastAPI, Flask, Django (pip / poetry / uv / pipenv)
+- **Go**, **Rust**, **Ruby** (Rails, Sinatra)
+- **Anything with a Dockerfile** — if we can't detect it, a `Dockerfile` always works
+
+## Known limitations
+
+Being upfront about what ShipOne doesn't (yet) do:
+
+- **No automatic database provisioning.** Bring your own hosted DB (Neon, Supabase, Atlas, Redis…) — if your `.env.example` lists e.g. `DATABASE_URL`, ShipOne collects the connection string (offering the cloud value from your local `.env`) and sets it on the backend before deploying. You paste one string; ShipOne never creates the database itself.
+- **No custom domains.** Apps live on the provider's default URL (`*.vercel.app`, `*.onrender.com`, …) for now.
+- **No auto-deploy on git push.** Deploys happen when you run `shipone` — deliberate, so nothing goes live without you.
+- **No monorepo task runners.** Detection understands multi-folder repos, but not Turborepo/Nx pipelines.
+- **Windows, macOS and Linux are supported** — but exotic shells (fish, nushell) are untested.
 
 ## It plays nice with your project
 

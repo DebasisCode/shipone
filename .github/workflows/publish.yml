@@ -1,0 +1,52 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Provenance requires id-token + contents write; concurrency stops two publishes racing.
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify versions match (package.json vs tag)
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::package.json ($PKG_VERSION) doesn't match release tag ($TAG_VERSION)."
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Smoke check the built CLI
+        run: node dist/cli.js --version
+
+      # Provenance = a verifiable "built by GitHub Actions" stamp on npmjs.com.
+      # Requires the npm package to use trusted publishing (no NPM_TOKEN needed).
+      # One-time setup: npmjs.com → package → Settings → Publishing access →
+      # connect the GitHub repo, or run `npm publish` once manually with 2FA.
+      - run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
