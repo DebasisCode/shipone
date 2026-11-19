@@ -11,6 +11,8 @@
 
 **Free & open source.** Works with your own Vercel, Netlify, Render and Railway accounts.
 
+**Live on npm:** [npmjs.com/package/shipone](https://www.npmjs.com/package/shipone)
+
 <img src="img/shiponeUI.png" alt="ShipOne in the terminal" width="720">
 
 </div>
